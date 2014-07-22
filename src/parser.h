@@ -20,69 +20,9 @@
 #define __PARSER_H__
 
 #include <glib.h>
-#include <glib-object.h>
-#include <stdbool.h>
 
-/**
- * GSDLParserContext:
- *
- * All fields in GSDLParserContext are private.
- */
-typedef struct _GSDLParserContext GSDLParserContext;
+#include "value.h"
 
-/**
- * GSDLParser:
- * @start_tag: Callback to invoke when a new element is entered. This is called for empty tags. 
- *             %values, %attr_names and %attr_values are %NULL-terminated arrays.
- * @end_tag: Callback to invoke at the end of an element.
- * @error: Callback to invoke when an error occurs. The error will be of type %G_CONVERT_ERROR,
- *         %G_IO_CHANNEL_ERROR or %GSDL_SYNTAX_ERROR.
- *
- * A set of parsing callbacks.
- *
- * Note: the %start_tag and %end_tag callbacks can optionally set an error, which will cause the
- * %error callback to be called with that error and parsing to immediately stop.
- */
-
-typedef struct {
-	void (*start_tag)(
-		GSDLParserContext *context,
-		const gchar *name,
-		GValue* const *values,
-		gchar* const *attr_names,
-		GValue* const *attr_values,
-		gpointer user_data,
-		GError **err
-	);
-
-	void (*end_tag)(
-		GSDLParserContext *context,
-		const gchar *name,
-		gpointer user_data,
-		GError **err
-	);
-
-	void (*error)(
-		GSDLParserContext *context,
-		GError *err,
-		gpointer user_data
-	);
-
-} GSDLParser;
-
-#define GSDL_GTYPE_ANY 1L << (sizeof(GType) * 8 - 1)
-#define GSDL_GTYPE_END 0L
-#define GSDL_GTYPE_OPTIONAL 1L << (sizeof(GType) * 8 - 2)
-
-extern GSDLParserContext* gsdl_parser_context_new(GSDLParser *parser, gpointer user_data);
-
-extern void gsdl_parser_context_push(GSDLParserContext *self, GSDLParser *parser, gpointer user_data);
-extern gpointer gsdl_parser_context_pop(GSDLParserContext *self);
-
-extern bool gsdl_parser_context_parse_file(GSDLParserContext *self, const char *filename);
-extern bool gsdl_parser_context_parse_string(GSDLParserContext *self, const char *str);
-
-extern bool gsdl_parser_collect_values(const gchar *name, GValue* const *values, GError **err, GType first_type, GValue **first_value, ...);
-extern bool gsdl_parser_collect_attributes(const gchar *name, gchar* const *attr_names, GValue* const *attr_values, GError **err, GType first_type, const gchar *first_name, GValue **first_value, ...);
+ScarabValue* scarab_parse_string(const char *string, GError **err);
 
 #endif
