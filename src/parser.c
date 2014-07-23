@@ -163,76 +163,27 @@ static ScarabValue* _parse_number(ScarabParserContext *self, GError **err) {
 	return result;
 }
 
-/*static bool _parse_value(ScarabParserContext *self, GValue *value) {*/
-	/*ScarabToken *token;*/
-	/*REQUIRE(_read(self, &token));*/
+static ScarabValue* _parse_string(ScarabParserContext *self, GError **err) {
+	ScarabToken *token;
+	REQUIRE(_read(self, &token, err));
 
-	/*int sign = 1;*/
-	
-	/*retry:*/
-	/*switch ((int) token->type) {*/
-		/*case '-':*/
-			/*sign = -1;*/
-			/*scarab_token_free(token);*/
+	ScarabValue *result = scarab_new_string(token->val);
 
-			/*REQUIRE(_read(self, &token));*/
-			/*EXPECT(T_NUMBER, T_LONGINTEGER, T_DAYS, T_TIME_PART);*/
+	scarab_token_free(token);
 
-			/*goto retry;*/
+	return result;
+}
 
-		/*case T_NUMBER:*/
-		/*case T_LONGINTEGER:*/
-			/*return _parse_number(self, value, token, sign);*/
+static ScarabValue* _parse_identifier(ScarabParserContext *self, GError **err) {
+	ScarabToken *token;
+	REQUIRE(_read(self, &token, err));
 
-		/*case T_DATE_PART:*/
-			/*return _parse_datetime(self, value, token);*/
+	ScarabValue *result = scarab_new_symbol(token->val);
 
-		/*case T_DAYS:*/
-		/*case T_TIME_PART:*/
-			/*return _parse_timespan(self, value, token, sign);*/
+	scarab_token_free(token);
 
-		/*case T_BOOLEAN:*/
-			/*g_value_init(value, G_TYPE_BOOLEAN);*/
-
-			/*if (strcmp(token->val, "true") == 0 || strcmp(token->val, "on") == 0) {*/
-				/*g_value_set_boolean(value, TRUE);*/
-			/*} else if (strcmp(token->val, "false") == 0 || strcmp(token->val, "off") == 0) {*/
-				/*g_value_set_boolean(value, FALSE);*/
-			/*}*/
-
-			/*break;*/
-
-		/*case T_NULL:*/
-			/*g_value_init(value, G_TYPE_POINTER);*/
-			/*g_value_set_pointer(value, NULL);*/
-			/*break;*/
-
-		/*case T_STRING:*/
-			/*g_value_init(value, G_TYPE_STRING);*/
-			/*g_value_set_string(value, token->val);*/
-			/*break;*/
-
-		/*case T_CHAR:*/
-			/*g_value_init(value, SCARAB_TYPE_UNICHAR);*/
-			/*scarab_gvalue_set_unichar(value, g_utf8_get_char(token->val));*/
-			/*break;*/
-
-		/*case T_BINARY:*/
-			/*g_value_init(value, SCARAB_TYPE_BINARY);*/
-
-			/*gsize len;*/
-			/*guchar *data = g_base64_decode(token->val, &len);*/
-			/*scarab_gvalue_take_binary(value, g_byte_array_new_take(data, len));*/
-
-			/*break;*/
-
-		/*default:*/
-			/*g_return_val_if_reached(false);*/
-	/*}*/
-
-	/*scarab_token_free(token);*/
-	/*return true;*/
-/*}*/
+	return result;
+}
 
 // For the list parsers
 static ScarabValue* _parse_value(ScarabParserContext *self, GError **err);
@@ -325,6 +276,10 @@ static ScarabValue* _parse_value(ScarabParserContext *self, GError **err) {
 		}
 	} else if (token->type == T_NUMBER) {
 		new_value = _parse_number(self, err);
+	} else if (token->type == T_STRING) {
+		new_value = _parse_string(self, err);
+	} else if (token->type == T_IDENTIFIER) {
+		new_value = _parse_identifier(self, err);
 	}
 
 	return new_value;

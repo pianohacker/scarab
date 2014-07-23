@@ -463,23 +463,15 @@ bool scarab_tokenizer_next(ScarabTokenizer *self, ScarabToken **result, GError *
 		while (_peek(self, &c, err) && !(c == '\n' || c == EOF)) _consume(self);
 
 		goto retry;
-	} else if (c == '-') {
-		if (_peek(self, &nc, err) && nc < 256 && isdigit(nc)) {
-			*result = _maketoken(T_NUMBER, line, col);
-			return _tokenize_number(self, *result, c, err);
-		} else {
-			*result = _maketoken(c, line, col);
-			return true;
-		}
+	} else if (c == '-' && _peek(self, &nc, err) && nc < 256 && isdigit(nc)) {
+		*result = _maketoken(T_NUMBER, line, col);
+		return _tokenize_number(self, *result, c, err);
 	} else if (c < 256 && strchr(",{}()[]", (char) c)) {
 		*result = _maketoken(c, line, col);
 		return true;
 	} else if (c < 256 && isdigit((char) c)) {
 		*result = _maketoken(T_NUMBER, line, col);
 		return _tokenize_number(self, *result, c, err);
-	} else if (g_unichar_isalpha(c) || g_unichar_ispunct(c)) {
-		*result = _maketoken(T_IDENTIFIER, line, col);
-		return _tokenize_identifier(self, *result, c, err);
 	} else if (c == '"') {
 		*result = _maketoken(T_STRING, line, col);
 		if (!_tokenize_string(self, *result, err)) return false;
@@ -513,6 +505,9 @@ bool scarab_tokenizer_next(ScarabTokenizer *self, ScarabToken **result, GError *
 	} else if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
 		// Do nothing
 		goto retry;
+	} else if (g_unichar_isalpha(c) || g_unichar_ispunct(c)) {
+		*result = _maketoken(T_IDENTIFIER, line, col);
+		return _tokenize_identifier(self, *result, c, err);
 	} else {
 		_set_error(err,
 			self,

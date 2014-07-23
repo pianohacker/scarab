@@ -34,6 +34,13 @@ ScarabValue* scarab_new_cell(ScarabValue *left, ScarabValue *right) {
 	return value;
 }
 
+ScarabValue* scarab_new_symbol(const char *val) {
+	ScarabValue *value = scarab_new(SCARAB_SYMBOL);
+	value->d_str = g_intern_string(val);
+
+	return value;
+}
+
 // For _inspect_cell
 void _inspect(ScarabValue *value, GString *result);
 
@@ -43,7 +50,9 @@ void _inspect_int(ScarabValue *value, GString *result) {
 
 void _inspect_string(ScarabValue *value, GString *result) {
 	char *repr = g_strescape(value->d_str, "");
+	g_string_append_c(result, '"');
 	g_string_append(result, repr);
+	g_string_append_c(result, '"');
 	g_free(repr);
 }
 
@@ -78,6 +87,9 @@ void _inspect(ScarabValue *value, GString *result) {
 			break;
 		case SCARAB_CELL:
 			_inspect_cell(value, result, false);
+			break;
+		case SCARAB_SYMBOL:
+			g_string_append(result, value->d_str);
 			break;
 	}
 }

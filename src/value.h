@@ -15,6 +15,7 @@ typedef enum {
 	SCARAB_INT,
 	SCARAB_STRING,
 	SCARAB_CELL,
+	SCARAB_SYMBOL,
 } ScarabValueType;
 
 typedef struct _ScarabValue {
@@ -33,9 +34,10 @@ typedef struct _ScarabValue {
 extern ScarabValue *scarab_nil;
 
 ScarabValue* scarab_new(ScarabValueType type);
-ScarabValue* scarab_new_string(const char *val);
 ScarabValue* scarab_new_int(long val);
+ScarabValue* scarab_new_string(const char *val);
 ScarabValue* scarab_new_cell(ScarabValue *left, ScarabValue *right);
+ScarabValue* scarab_new_symbol(const char *val);
 
 const char* scarab_inspect(ScarabValue *value);
 

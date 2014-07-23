@@ -22,3 +22,11 @@ ScarabValue* scarab_list_append(ScarabValue *list, ScarabValue *value) {
 		puts("WTF"); abort();
 	}
 }
+
+ScarabValue* scarab_list_prepend(ScarabValue *list, ScarabValue *value) {
+	if (SCARAB_IS_CELL(list) || SCARAB_IS_NIL(list)) {
+		return scarab_new_cell(value, list);
+	} else {
+		puts("WTF"); abort();
+	}
+}
