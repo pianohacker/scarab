@@ -23,7 +23,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "syntax.h"
+#include "error.h"
 #include "tokenizer.h"
 
 //> Macros
@@ -458,19 +458,20 @@ bool scarab_tokenizer_next(ScarabTokenizer *self, ScarabToken **result, GError *
 	if (G_UNLIKELY(c == EOF)) {
 		*result = _maketoken(T_EOF, line, col);
 		return true;
-	} else if (c == '\r') {
-		if (_peek(self, &c, err) && c == '\n') _consume(self);
-
-		*result = _maketoken('\n', line, col);
-		FAIL_IF_ERR();
-
-		return true;
 	} else if (c == '#') {
 		_consume(self);
 		while (_peek(self, &c, err) && !(c == '\n' || c == EOF)) _consume(self);
 
 		goto retry;
-	} else if (c < 256 && strchr(",{}()[]\n", (char) c)) {
+	} else if (c == '-') {
+		if (_peek(self, &nc, err) && nc < 256 && isdigit(nc)) {
+			*result = _maketoken(T_NUMBER, line, col);
+			return _tokenize_number(self, *result, c, err);
+		} else {
+			*result = _maketoken(c, line, col);
+			return true;
+		}
+	} else if (c < 256 && strchr(",{}()[]", (char) c)) {
 		*result = _maketoken(c, line, col);
 		return true;
 	} else if (c < 256 && isdigit((char) c)) {
@@ -509,39 +510,7 @@ bool scarab_tokenizer_next(ScarabTokenizer *self, ScarabToken **result, GError *
 			);
 			return false;
 		}
-	} else if (c == '\'') {
-		*result = _maketoken(T_CHAR, line, col);
-		(*result)->val = g_malloc0(4);
-
-		_read(self, &c, err);
-
-		if (c == '\\') {
-			_read(self, &c, err);
-
-			switch (c) {
-				case 'n': c = '\n'; break;
-				case 'r': c = '\r'; break;
-				case 't': c = '\t'; break;
-				case '"': c = '"'; break;
-				case '\'': c = '\''; break;
-				case '\\': c = '\\'; break;
-			}
-		}
-
-		g_unichar_to_utf8(c, (*result)->val); 
-
-		REQUIRE(_read(self, &c, err));
-		if (c == '\'') {
-			return true;
-		} else {
-			_set_error(err,
-				self,
-				SCARAB_SYNTAX_ERROR_MISSING_DELIMITER,
-				"Missing \"'\""
-			);
-			return false;
-		}
-	} else if (c == ' ' || c == '\t') {
+	} else if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
 		// Do nothing
 		goto retry;
 	} else {

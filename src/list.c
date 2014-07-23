@@ -10,9 +10,9 @@ ScarabValue* scarab_list_append(ScarabValue *list, ScarabValue *value) {
 		ScarabValue *tail = list;
 
 		// Iterate while we have valid cells
-		while (SCARAB_IS_CELL(tail->right)) tail = tail->right;
+		while (SCARAB_IS_CELL(tail->d_right)) tail = tail->d_right;
 		
-		tail->right = new_tail;
+		tail->d_right = new_tail;
 
 		return list;
 	} else if (SCARAB_IS_NIL(list)) {

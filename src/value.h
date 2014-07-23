@@ -3,8 +3,6 @@
 
 #include <assert.h>
 
-#include "cell.h"
-
 #define SCARAB_IS(val, t) ((val)->type == (t))
 #define SCARAB_IS_NIL(val) SCARAB_IS(val, SCARAB_NIL)
 #define SCARAB_IS_INT(val) SCARAB_IS(val, SCARAB_INT)
@@ -19,18 +17,18 @@ typedef enum {
 	SCARAB_CELL,
 } ScarabValueType;
 
-typedef struct ScarabValue {
+typedef struct _ScarabValue {
 	ScarabValueType type;
 	
 	union {
 		char *d_str;
 		long d_int;
 		struct {
-			ScarabValue *d_left;
-			ScarabValue *d_right;
+			struct _ScarabValue *d_left;
+			struct _ScarabValue *d_right;
 		};
 	};
-};
+} ScarabValue;
 
 extern ScarabValue *scarab_nil;
 
@@ -38,5 +36,7 @@ ScarabValue* scarab_new(ScarabValueType type);
 ScarabValue* scarab_new_string(const char *val);
 ScarabValue* scarab_new_int(long val);
 ScarabValue* scarab_new_cell(ScarabValue *left, ScarabValue *right);
+
+const char* scarab_inspect(ScarabValue *value);
 
 #endif
