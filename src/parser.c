@@ -133,6 +133,7 @@ static bool _token_is_value(ScarabToken *token) {
 	switch ((int) token->type) {
 		case '(':
 		case '[':
+		case '{':
 		case T_NUMBER:
 		case T_IDENTIFIER:
 		case T_STRING:
@@ -187,6 +188,69 @@ static ScarabValue* _parse_identifier(ScarabParserContext *self, GError **err) {
 
 // For the list parsers
 static ScarabValue* _parse_value(ScarabParserContext *self, GError **err);
+
+static ScarabValue* _parse_operator_list(ScarabParserContext *self, ScarabTokenType terminator, GError **err) {
+	ScarabValue *result = scarab_nil;
+	ScarabValue *operator = NULL;
+	ScarabToken *token;
+
+	REQUIRE(_peek(self, &token, err));
+
+	if (!_token_is_value(token)) {
+		EXPECT('}');
+		return result;
+	}
+
+	while (true) {
+		REQUIRE(_peek(self, &token, err));
+
+		if (!_token_is_value(token)) {
+			_error(
+				self,
+				token,
+				SCARAB_SYNTAX_ERROR_MALFORMED,
+				g_strdup_printf("Unexpected %s, expected a value", scarab_token_type_name(token->type)),
+				err);
+
+			return NULL;
+		}
+
+		ScarabValue *new_value = _parse_value(self, err);
+
+		if (!new_value) return NULL;
+
+		result = scarab_list_append(result, new_value);
+
+		REQUIRE(_peek(self, &token, err));
+
+		if (token->type == '}') break;
+
+		EXPECT(T_IDENTIFIER);
+
+		if (operator) {
+			_consume(self);
+
+			if (strcmp(operator->d_str, token->val) != 0) {
+				_error(
+					self,
+					token,
+					SCARAB_SYNTAX_ERROR_MALFORMED,
+					g_strdup_printf("Non-matching operator %s in operator list", token->val),
+					err);
+				return NULL;
+			}
+
+			scarab_token_free(token);
+		} else {
+			operator = _parse_value(self, err);
+
+			result = scarab_list_prepend(result, operator);
+		}
+
+	}
+
+	return result;
+}
 
 static ScarabValue* _parse_closed_list(ScarabParserContext *self, ScarabTokenType terminator, GError **err) {
 	ScarabValue *result = scarab_nil;
@@ -252,26 +316,31 @@ static ScarabValue* _parse_value(ScarabParserContext *self, GError **err) {
 
 	REQUIRE(_peek(self, &token, err));
 
-	if (token->type == '(') {
+	if (token->type == '(' || token->type == '[' || token->type == '{') {
+		ScarabTokenType terminator;
 		_consume(self);
-		scarab_token_free(token);
 
-		new_value = _parse_closed_list(self, ')', err);
-
-		if (new_value) {
-			REQUIRE(_read(self, &token, err));
-			EXPECT(')');
-			scarab_token_free(token);
+		switch ((int) token->type) {
+			case '(':
+				terminator = ')';
+				new_value = _parse_closed_list(self, terminator, err);
+				break;
+			case '[':
+				terminator = ']';
+				new_value = _parse_open_list(self, terminator, err);
+				break;
+			case '{':
+				terminator = '}';
+				new_value = _parse_operator_list(self, terminator, err);
+				break;
+			default: g_warn_if_reached();
 		}
-	} else if (token->type == '[') {
-		_consume(self);
-		scarab_token_free(token);
 
-		new_value = _parse_open_list(self, ']', err);
+		scarab_token_free(token);
 
 		if (new_value) {
 			REQUIRE(_read(self, &token, err));
-			EXPECT(']');
+			EXPECT(terminator);
 			scarab_token_free(token);
 		}
 	} else if (token->type == T_NUMBER) {
