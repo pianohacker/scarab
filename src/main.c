@@ -7,7 +7,7 @@
 #include "value.h"
 
 int main(int argc, char **argv) {
-	ScarabContext *ctx = scarab_context_new();
+	KhContext *ctx = kh_context_new();
 
 	while (true) {
 		char buffer[1024];
@@ -16,7 +16,7 @@ int main(int argc, char **argv) {
 		if (!fgets(buffer, sizeof(buffer), stdin)) break;
 
 		GError *err = NULL;
-		ScarabValue *forms = scarab_parse_string(buffer, &err);
+		KhValue *forms = kh_parse_string(buffer, &err);
 
 		if (!forms) {
 			printf("Parse error: %s\n", err->message);
@@ -24,16 +24,16 @@ int main(int argc, char **argv) {
 		}
 
 		bool print_number = true;
-		if (forms->d_right == scarab_nil) {
+		if (forms->d_right == kh_nil) {
 			print_number = false;
 		}
 
 		int i = 1;
-		SCARAB_ITERATE(forms) {
-			ScarabValue *value = scarab_eval(ctx, forms->d_left);
+		KH_ITERATE(forms) {
+			KhValue *value = kh_eval(ctx, forms->d_left);
 
 			if (print_number) printf("%d. ", i++);
-			puts(scarab_inspect(value));
+			puts(kh_inspect(value));
 		}
 	}
 }

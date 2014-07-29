@@ -4,17 +4,17 @@
 #include "eval.h"
 #include "value.h"
 
-struct _ScarabContext {
+struct _KhContext {
 };
 
-ScarabContext* scarab_context_new() {
+KhContext* kh_context_new() {
 	static bool core_init_done = false;
 	
 	if (!core_init_done) {
-		scarab_nil = scarab_new(SCARAB_NIL);
+		kh_nil = kh_new(KH_NIL);
 
 		core_init_done = true;
 	}
 
-	return g_slice_new0(ScarabContext);
+	return g_slice_new0(KhContext);
 }

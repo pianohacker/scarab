@@ -3,9 +3,9 @@
 
 #include "value.h"
 
-#define SCARAB_ITERATE(list) for (; list != scarab_nil; list = list->d_right)
+#define KH_ITERATE(list) for (; list != kh_nil; list = list->d_right)
 
-ScarabValue* scarab_list_append(ScarabValue *list, ScarabValue *value);
-ScarabValue* scarab_list_prepend(ScarabValue *list, ScarabValue *value);
+KhValue* kh_list_append(KhValue *list, KhValue *value);
+KhValue* kh_list_prepend(KhValue *list, KhValue *value);
 
 #endif

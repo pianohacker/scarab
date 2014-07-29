@@ -29,22 +29,22 @@
 #include "tokenizer.h"
 
 typedef struct {
-	ScarabTokenizer *tokenizer;
-	ScarabToken *peek_token;
-} ScarabParserContext;
+	KhTokenizer *tokenizer;
+	KhToken *peek_token;
+} KhParserContext;
 
 #define EXPECT(...) if (!_expect(self, token, err, __VA_ARGS__, 0)) return NULL;
 #define REQUIRE(expr) if (!expr) return NULL;
 
-static bool _read(ScarabParserContext *self, ScarabToken **token, GError **err) {
+static bool _read(KhParserContext *self, KhToken **token, GError **err) {
 	if (self->peek_token) {
-		ScarabToken *result = self->peek_token;
+		KhToken *result = self->peek_token;
 		self->peek_token = NULL;
 		*token = result;
 
 		return true;
 	} else {
-		if (!scarab_tokenizer_next(self->tokenizer, token, err)) {
+		if (!kh_tokenizer_next(self->tokenizer, token, err)) {
 			return false;
 		} else {
 			return true;
@@ -52,13 +52,13 @@ static bool _read(ScarabParserContext *self, ScarabToken **token, GError **err) 
 	}
 }
 
-static bool _peek(ScarabParserContext *self, ScarabToken **token, GError **err) {
+static bool _peek(KhParserContext *self, KhToken **token, GError **err) {
 	if (self->peek_token) {
 		*token = self->peek_token;
 
 		return true;
 	} else {
-		if (!scarab_tokenizer_next(self->tokenizer, &(self->peek_token), err)) {
+		if (!kh_tokenizer_next(self->tokenizer, &(self->peek_token), err)) {
 			return false;
 		} else {
 			*token = self->peek_token;
@@ -67,46 +67,46 @@ static bool _peek(ScarabParserContext *self, ScarabToken **token, GError **err) 
 	}
 }
 
-static void _consume(ScarabParserContext *self) {
+static void _consume(KhParserContext *self) {
 	g_assert(self->peek_token != NULL);
 
 	self->peek_token = NULL;
 }
 
-static void _error(ScarabParserContext *self, ScarabToken *token, ScarabSyntaxError err_type, char *msg, GError **err) {
+static void _error(KhParserContext *self, KhToken *token, KhSyntaxError err_type, char *msg, GError **err) {
 	g_set_error(err,
-		SCARAB_SYNTAX_ERROR,
+		KH_SYNTAX_ERROR,
 		err_type,
 		"%s in %s, line %d, column %d",
 		msg,
-		scarab_tokenizer_get_filename(self->tokenizer),
+		kh_tokenizer_get_filename(self->tokenizer),
 		token->line,
 		token->col
 	);
-	scarab_token_free(token);
+	kh_token_free(token);
 }
 
-static bool _expect(ScarabParserContext *self, ScarabToken *token, GError **err, ...) {
+static bool _expect(KhParserContext *self, KhToken *token, GError **err, ...) {
 	va_list args;
-	ScarabTokenType type;
+	KhTokenType type;
 
 	va_start(args, err);
 
-	while (type = va_arg(args, ScarabTokenType), type != 0 && token->type != type);
+	while (type = va_arg(args, KhTokenType), type != 0 && token->type != type);
 
 	va_end(args);
 
 	if (type == 0) {
 		GString *err_string = g_string_new("");
-		g_string_sprintf(err_string, "Unexpected %s, expected one of: ", scarab_token_type_name(token->type));
+		g_string_sprintf(err_string, "Unexpected %s, expected one of: ", kh_token_type_name(token->type));
 
 		va_start(args, err);
-		type = va_arg(args, ScarabTokenType);
+		type = va_arg(args, KhTokenType);
 
-		g_string_append(err_string, scarab_token_type_name(type));
-		while (type = va_arg(args, ScarabTokenType), type != 0) {
+		g_string_append(err_string, kh_token_type_name(type));
+		while (type = va_arg(args, KhTokenType), type != 0) {
 			g_string_append(err_string, ", ");
-			g_string_append(err_string, scarab_token_type_name(type));
+			g_string_append(err_string, kh_token_type_name(type));
 		}
 
 		va_end(args);
@@ -114,7 +114,7 @@ static bool _expect(ScarabParserContext *self, ScarabToken *token, GError **err,
 		_error(
 			self,
 			token, 
-			SCARAB_SYNTAX_ERROR_MALFORMED,
+			KH_SYNTAX_ERROR_MALFORMED,
 			err_string->str,
 			err
 		);
@@ -128,7 +128,7 @@ static bool _expect(ScarabParserContext *self, ScarabToken *token, GError **err,
 }
 
 //> Parser Functions
-static bool _token_is_value(ScarabToken *token) {
+static bool _token_is_value(KhToken *token) {
 	// The cast to int is largely to shut up the gcc enum niceties.
 	switch ((int) token->type) {
 		case '(':
@@ -143,8 +143,8 @@ static bool _token_is_value(ScarabToken *token) {
 	}
 }
 
-static ScarabValue* _parse_number(ScarabParserContext *self, GError **err) {
-	ScarabToken *token;
+static KhValue* _parse_number(KhParserContext *self, GError **err) {
+	KhToken *token;
 	REQUIRE(_read(self, &token, err));
 
 	char *end;
@@ -152,47 +152,47 @@ static ScarabValue* _parse_number(ScarabParserContext *self, GError **err) {
 	long value = strtol(token->val, &end, 10);
 
 	if (errno) {
-		_error(self, token, SCARAB_SYNTAX_ERROR_BAD_LITERAL, "Long integer out of range", err);
+		_error(self, token, KH_SYNTAX_ERROR_BAD_LITERAL, "Long integer out of range", err);
 
 		return NULL;
 	}
 
-	ScarabValue *result = scarab_new_int(value);
+	KhValue *result = kh_new_int(value);
 
-	scarab_token_free(token);
-
-	return result;
-}
-
-static ScarabValue* _parse_string(ScarabParserContext *self, GError **err) {
-	ScarabToken *token;
-	REQUIRE(_read(self, &token, err));
-
-	ScarabValue *result = scarab_new_string(token->val);
-
-	scarab_token_free(token);
+	kh_token_free(token);
 
 	return result;
 }
 
-static ScarabValue* _parse_identifier(ScarabParserContext *self, GError **err) {
-	ScarabToken *token;
+static KhValue* _parse_string(KhParserContext *self, GError **err) {
+	KhToken *token;
 	REQUIRE(_read(self, &token, err));
 
-	ScarabValue *result = scarab_new_symbol(token->val);
+	KhValue *result = kh_new_string(token->val);
 
-	scarab_token_free(token);
+	kh_token_free(token);
+
+	return result;
+}
+
+static KhValue* _parse_identifier(KhParserContext *self, GError **err) {
+	KhToken *token;
+	REQUIRE(_read(self, &token, err));
+
+	KhValue *result = kh_new_symbol(token->val);
+
+	kh_token_free(token);
 
 	return result;
 }
 
 // For the list parsers
-static ScarabValue* _parse_value(ScarabParserContext *self, GError **err);
+static KhValue* _parse_value(KhParserContext *self, GError **err);
 
-static ScarabValue* _parse_operator_list(ScarabParserContext *self, ScarabTokenType terminator, GError **err) {
-	ScarabValue *result = scarab_nil;
-	ScarabValue *operator = NULL;
-	ScarabToken *token;
+static KhValue* _parse_operator_list(KhParserContext *self, KhTokenType terminator, GError **err) {
+	KhValue *result = kh_nil;
+	KhValue *operator = NULL;
+	KhToken *token;
 
 	REQUIRE(_peek(self, &token, err));
 
@@ -208,18 +208,18 @@ static ScarabValue* _parse_operator_list(ScarabParserContext *self, ScarabTokenT
 			_error(
 				self,
 				token,
-				SCARAB_SYNTAX_ERROR_MALFORMED,
-				g_strdup_printf("Unexpected %s, expected a value", scarab_token_type_name(token->type)),
+				KH_SYNTAX_ERROR_MALFORMED,
+				g_strdup_printf("Unexpected %s, expected a value", kh_token_type_name(token->type)),
 				err);
 
 			return NULL;
 		}
 
-		ScarabValue *new_value = _parse_value(self, err);
+		KhValue *new_value = _parse_value(self, err);
 
 		if (!new_value) return NULL;
 
-		result = scarab_list_append(result, new_value);
+		result = kh_list_append(result, new_value);
 
 		REQUIRE(_peek(self, &token, err));
 
@@ -234,17 +234,17 @@ static ScarabValue* _parse_operator_list(ScarabParserContext *self, ScarabTokenT
 				_error(
 					self,
 					token,
-					SCARAB_SYNTAX_ERROR_MALFORMED,
+					KH_SYNTAX_ERROR_MALFORMED,
 					g_strdup_printf("Non-matching operator %s in operator list", token->val),
 					err);
 				return NULL;
 			}
 
-			scarab_token_free(token);
+			kh_token_free(token);
 		} else {
 			operator = _parse_value(self, err);
 
-			result = scarab_list_prepend(result, operator);
+			result = kh_list_prepend(result, operator);
 		}
 
 	}
@@ -252,10 +252,10 @@ static ScarabValue* _parse_operator_list(ScarabParserContext *self, ScarabTokenT
 	return result;
 }
 
-static ScarabValue* _parse_closed_list(ScarabParserContext *self, ScarabTokenType terminator, GError **err) {
-	ScarabValue *result = scarab_nil;
+static KhValue* _parse_closed_list(KhParserContext *self, KhTokenType terminator, GError **err) {
+	KhValue *result = kh_nil;
 
-	ScarabToken *token;
+	KhToken *token;
 	while (true) {
 		REQUIRE(_peek(self, &token, err));
 
@@ -269,29 +269,29 @@ static ScarabValue* _parse_closed_list(ScarabParserContext *self, ScarabTokenTyp
 			break;
 		}
 
-		ScarabValue *new_value = _parse_value(self, err);
+		KhValue *new_value = _parse_value(self, err);
 
 		if (!new_value) return NULL;
 
-		result = scarab_list_append(result, new_value);
+		result = kh_list_append(result, new_value);
 	}
 
 	return result;
 }
 
-static ScarabValue* _parse_open_list(ScarabParserContext *self, ScarabTokenType terminator, GError **err) {
-	ScarabValue *result = scarab_nil;
+static KhValue* _parse_open_list(KhParserContext *self, KhTokenType terminator, GError **err) {
+	KhValue *result = kh_nil;
 
-	ScarabToken *token;
+	KhToken *token;
 	while (true) {
 		REQUIRE(_peek(self, &token, err));
 
 		if (_token_is_value(token)) {
-			ScarabValue *new_value = _parse_closed_list(self, terminator, err);
+			KhValue *new_value = _parse_closed_list(self, terminator, err);
 
 			if (!new_value) return NULL;
 
-			result = scarab_list_append(result, new_value);
+			result = kh_list_append(result, new_value);
 
 			REQUIRE(_peek(self, &token, err));
 		}
@@ -303,21 +303,21 @@ static ScarabValue* _parse_open_list(ScarabParserContext *self, ScarabTokenType 
 			break;
 		} else {
 			_consume(self);
-			scarab_token_free(token);
+			kh_token_free(token);
 		}
 	}
 
 	return result;
 }
 
-static ScarabValue* _parse_value(ScarabParserContext *self, GError **err) {
-	ScarabToken *token;
-	ScarabValue *new_value;
+static KhValue* _parse_value(KhParserContext *self, GError **err) {
+	KhToken *token;
+	KhValue *new_value;
 
 	REQUIRE(_peek(self, &token, err));
 
 	if (token->type == '(' || token->type == '[' || token->type == '{') {
-		ScarabTokenType terminator;
+		KhTokenType terminator;
 		_consume(self);
 
 		switch ((int) token->type) {
@@ -336,12 +336,12 @@ static ScarabValue* _parse_value(ScarabParserContext *self, GError **err) {
 			default: g_warn_if_reached();
 		}
 
-		scarab_token_free(token);
+		kh_token_free(token);
 
 		if (new_value) {
 			REQUIRE(_read(self, &token, err));
 			EXPECT(terminator);
-			scarab_token_free(token);
+			kh_token_free(token);
 		}
 	} else if (token->type == T_NUMBER) {
 		new_value = _parse_number(self, err);
@@ -354,22 +354,22 @@ static ScarabValue* _parse_value(ScarabParserContext *self, GError **err) {
 	return new_value;
 }
 
-static ScarabValue* _parse(ScarabParserContext *self, GError **err) {
-	ScarabValue* result = _parse_open_list(self, T_EOF, err);
+static KhValue* _parse(KhParserContext *self, GError **err) {
+	KhValue* result = _parse_open_list(self, T_EOF, err);
 
 	if (result) {
-		ScarabToken *token;
+		KhToken *token;
 		REQUIRE(_read(self, &token, err));
 		EXPECT(T_EOF);
-		scarab_token_free(token);
+		kh_token_free(token);
 	}
 
 	return result;
 }
 
-ScarabValue* scarab_parse_string(const char *str, GError **err) {
-	ScarabParserContext *self = g_slice_new0(ScarabParserContext);
-	self->tokenizer = scarab_tokenizer_new_from_string(str, err);
+KhValue* kh_parse_string(const char *str, GError **err) {
+	KhParserContext *self = g_slice_new0(KhParserContext);
+	self->tokenizer = kh_tokenizer_new_from_string(str, err);
 
 	if (!self->tokenizer) {
 		return NULL;

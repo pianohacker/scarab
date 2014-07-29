@@ -18,6 +18,6 @@
 
 #include <glib.h>
 
-GQuark scarab_syntax_error_quark() {
+GQuark kh_syntax_error_quark() {
 	return g_quark_from_static_string("scarab-syntax-error-quark");
 }

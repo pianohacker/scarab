@@ -23,6 +23,6 @@
 
 #include "value.h"
 
-ScarabValue* scarab_parse_string(const char *string, GError **err);
+KhValue* kh_parse_string(const char *string, GError **err);
 
 #endif

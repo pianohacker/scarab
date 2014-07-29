@@ -32,7 +32,7 @@
 #define REQUIRE(expr) if (!expr) return false;
 
 //> Internal Types
-struct _ScarabTokenizer {
+struct _KhTokenizer {
 	char *filename;
 	GIOChannel *channel;
 	gunichar *stringbuf;
@@ -56,16 +56,16 @@ static char *TOKEN_NAMES[15] = {
 //> Public Functions
 
 /**
- * scarab_tokenizer_new:
+ * kh_tokenizer_new:
  * @filename: Name of file to be parsed.
  * @err: Return location for a %GError to be set on failure, may be NULL.
  *
  * Creates a new tokenizer consuming the given file.
  *
- * Returns: A new %ScarabTokenizer, or NULL on failure.
+ * Returns: A new %KhTokenizer, or NULL on failure.
  */
-ScarabTokenizer* scarab_tokenizer_new(const char *filename, GError **err) {
-	ScarabTokenizer* self = g_slice_new0(ScarabTokenizer);
+KhTokenizer* kh_tokenizer_new(const char *filename, GError **err) {
+	KhTokenizer* self = g_slice_new0(KhTokenizer);
 	self->filename = g_strdup(filename);
 	self->channel = g_io_channel_new_file(filename, "r", err);
 
@@ -80,16 +80,16 @@ ScarabTokenizer* scarab_tokenizer_new(const char *filename, GError **err) {
 }
 
 /**
- * scarab_tokenizer_new_from_string:
+ * kh_tokenizer_new_from_string:
  * @str: String to be parsed.
  * @err: Return location for a %GError to be set on failure, may be NULL.
  *
  * Creates a new tokenizer consuming the given string. The filename will be set to "&lt;string&gt;".
  *
- * Returns: A new %ScarabTokenizer, or NULL on failure.
+ * Returns: A new %KhTokenizer, or NULL on failure.
  */
-ScarabTokenizer* scarab_tokenizer_new_from_string(const char *str, GError **err) {
-	ScarabTokenizer* self = g_slice_new0(ScarabTokenizer);
+KhTokenizer* kh_tokenizer_new_from_string(const char *str, GError **err) {
+	KhTokenizer* self = g_slice_new0(KhTokenizer);
 	self->filename = "<string>";
 	self->stringbuf = g_utf8_to_ucs4(str, -1, NULL, NULL, err);
 
@@ -104,22 +104,22 @@ ScarabTokenizer* scarab_tokenizer_new_from_string(const char *str, GError **err)
 }
 
 /**
- * scarab_tokenizer_get_filename:
- * @self: A valid %ScarabTokenizer.
+ * kh_tokenizer_get_filename:
+ * @self: A valid %KhTokenizer.
  *
- * Returns: the name of the file being parsed by this %ScarabTokenizer. May be "&lt;string&gt;".
+ * Returns: the name of the file being parsed by this %KhTokenizer. May be "&lt;string&gt;".
  */
-char* scarab_tokenizer_get_filename(ScarabTokenizer *self) {
+char* kh_tokenizer_get_filename(KhTokenizer *self) {
 	return self->filename;
 }
 
 /**
- * scarab_tokenizer_free:
- * @self: A valid %ScarabTokenizer.
+ * kh_tokenizer_free:
+ * @self: A valid %KhTokenizer.
  *
- * Frees this %ScarabTokenizer and all resources associated with it.
+ * Frees this %KhTokenizer and all resources associated with it.
  */
-void scarab_tokenizer_free(ScarabTokenizer *self) {
+void kh_tokenizer_free(KhTokenizer *self) {
 	g_free(self->filename);
 
 	if (self->channel) {
@@ -129,17 +129,17 @@ void scarab_tokenizer_free(ScarabTokenizer *self) {
 
 	if (self->stringbuf) g_free(self->stringbuf);
 
-	g_slice_free(ScarabTokenizer, self);
+	g_slice_free(KhTokenizer, self);
 }
 
 /**
- * scarab_token_type_name:
- * @token_type: A valid %ScarabTokenType.
+ * kh_token_type_name:
+ * @token_type: A valid %KhTokenType.
  *
  * Returns: a string representing the token type. For simple, one-character tokens, this will be
  *          something like "'='". Longer tokens will have a simple phrase, like "date part".
  */
-extern char* scarab_token_type_name(ScarabTokenType token_type) {
+extern char* kh_token_type_name(KhTokenType token_type) {
 	static char buffer[4] = "' '";
 
 	if (0 <= token_type && token_type < 256) {
@@ -151,21 +151,21 @@ extern char* scarab_token_type_name(ScarabTokenType token_type) {
 }
 
 /**
- * scarab_token_free:
- * @token: A valid %ScarabToken.
+ * kh_token_free:
+ * @token: A valid %KhToken.
  *
  * Should be called to free a token and its contents once the parser is done with it.
  */
-extern void scarab_token_free(ScarabToken *token) {
+extern void kh_token_free(KhToken *token) {
 	if (token->val) g_free(token->val);
 
-	g_slice_free(ScarabToken, token);
+	g_slice_free(KhToken, token);
 }
 
 //> Internal Functions
 /*
  * _read:
- * @self: A valid %ScarabTokenizer.
+ * @self: A valid %KhTokenizer.
  * @result: (out): The location to store the resulting %gunichar.
  * @err: (out) (allow-none): Location to store any %GError, or %NULL.
  *
@@ -173,7 +173,7 @@ extern void scarab_token_free(ScarabToken *token) {
  *
  * Returns: Whether the read succeeded.
  */
-static bool _read(ScarabTokenizer *self, gunichar *result, GError **err) {
+static bool _read(KhTokenizer *self, gunichar *result, GError **err) {
 	if (self->peek_avail) {
 		*result = self->peeked;
 		self->peek_avail = false;
@@ -219,7 +219,7 @@ static bool _read(ScarabTokenizer *self, gunichar *result, GError **err) {
 
 /*
  * _peek:
- * @self: A valid %ScarabTokenizer.
+ * @self: A valid %KhTokenizer.
  * @result: (out): The location to store the resulting %gunichar.
  * @err: (out) (allow-none): Location to store any %GError, or %NULL.
  *
@@ -228,7 +228,7 @@ static bool _read(ScarabTokenizer *self, gunichar *result, GError **err) {
  * Returns: Whether the peek succeeded. This should always be checked, as _peek() may or may not
  *          have to read from the input.
  */
-static bool _peek(ScarabTokenizer *self, gunichar *result, GError **err) {
+static bool _peek(KhTokenizer *self, gunichar *result, GError **err) {
 	if (!self->peek_avail) {
 		if (self->stringbuf) {
 			if (*self->stringbuf) {
@@ -265,12 +265,12 @@ static bool _peek(ScarabTokenizer *self, gunichar *result, GError **err) {
 
 /*
  * _consume:
- * @self: A valid %ScarabTokenizer.
+ * @self: A valid %KhTokenizer.
  *
  * Throws away the current lookahead character. Useful after a _peek(), when the character is known,
  * but needs to be moved past.
  */
-static void _consume(ScarabTokenizer *self) {
+static void _consume(KhTokenizer *self) {
 	g_assert(self->peek_avail);
 
 	gunichar result;
@@ -279,14 +279,14 @@ static void _consume(ScarabTokenizer *self) {
 
 /*
  * _maketoken:
- * @type: A valid %ScarabTokenType.
+ * @type: A valid %KhTokenType.
  * @line: Line where the token occurred.
  * @col: Column of the start of the token.
  *
- * Returns: A newly-allocated %ScarabToken with the given information.
+ * Returns: A newly-allocated %KhToken with the given information.
  */
-static ScarabToken* _maketoken(ScarabTokenType type, int line, int col) {
-	ScarabToken *result = g_slice_new0(ScarabToken);
+static KhToken* _maketoken(KhTokenType type, int line, int col) {
+	KhToken *result = g_slice_new0(KhToken);
 
 	result->type = type;
 	result->line = line;
@@ -298,16 +298,16 @@ static ScarabToken* _maketoken(ScarabTokenType type, int line, int col) {
 /*
  * _maketoken:
  * @err: (out) (allow-none): Output location of the %GError passed to the calling function.
- * @self: A valid %ScarabTokenizer.
- * @err_type: Kind of %ScarabSyntaxError to set.
+ * @self: A valid %KhTokenizer.
+ * @err_type: Kind of %KhSyntaxError to set.
  * @msg: Message to set on the %GError. Will be appended with the filename, line and column that the
  *       tokenizer is currently at.
  *
- * Sets a %GError in the %SCARAB_SYNTAX_ERROR domain.
+ * Sets a %GError in the %KH_SYNTAX_ERROR domain.
  */
-static void _set_error(GError **err, ScarabTokenizer *self, ScarabSyntaxError err_type, char *msg) {
+static void _set_error(GError **err, KhTokenizer *self, KhSyntaxError err_type, char *msg) {
 	g_set_error(err,
-		SCARAB_SYNTAX_ERROR,
+		KH_SYNTAX_ERROR,
 		err_type,
 		"%s in %s, line %d, column %d",
 		msg,
@@ -318,7 +318,7 @@ static void _set_error(GError **err, ScarabTokenizer *self, ScarabSyntaxError er
 }
 
 //> Sub-tokenizers
-static bool _tokenize_number(ScarabTokenizer *self, ScarabToken *result, gunichar c, GError **err) {
+static bool _tokenize_number(KhTokenizer *self, KhToken *result, gunichar c, GError **err) {
 	int length = 7;
 	char *output = result->val = g_malloc(length);
 
@@ -352,7 +352,7 @@ static bool _tokenize_number(ScarabTokenizer *self, ScarabToken *result, gunicha
 	return true;
 }
 
-static bool _tokenize_identifier(ScarabTokenizer *self, ScarabToken *result, gunichar c, GError **err) {
+static bool _tokenize_identifier(KhTokenizer *self, KhToken *result, gunichar c, GError **err) {
 	int length = 7;
 	char *output = result->val = g_malloc(length);
 
@@ -371,7 +371,7 @@ static bool _tokenize_identifier(ScarabTokenizer *self, ScarabToken *result, gun
 	return true;
 }
 
-static bool _tokenize_string(ScarabTokenizer *self, ScarabToken *result, GError **err) {
+static bool _tokenize_string(KhTokenizer *self, KhToken *result, GError **err) {
 	int length = 7;
 	gunichar c;
 	char *output = result->val = g_malloc(length);
@@ -412,7 +412,7 @@ static bool _tokenize_string(ScarabTokenizer *self, ScarabToken *result, GError 
 	return true;
 }
 
-static bool _tokenize_backquote_string(ScarabTokenizer *self, ScarabToken *result, GError **err) {
+static bool _tokenize_backquote_string(KhTokenizer *self, KhToken *result, GError **err) {
 	int length = 7;
 	gunichar c;
 	char *output = result->val = g_malloc(length);
@@ -435,17 +435,17 @@ static bool _tokenize_backquote_string(ScarabTokenizer *self, ScarabToken *resul
 }
 
 /**
- * scarab_tokenizer_next:
- * @self: A valid %ScarabTokenizer.
- * @result: (out callee-allocates): A %ScarabToken to initialize and fill in.
+ * kh_tokenizer_next:
+ * @self: A valid %KhTokenizer.
+ * @result: (out callee-allocates): A %KhToken to initialize and fill in.
  * @err: (out) (allow-none): Location to store any error, may be %NULL.
  *
  * Fetches the next token from the input. Depending on the source of input, may set an error in one
- * of the %SCARAB_SYNTAX_ERROR, %G_IO_CHANNEL_ERROR, or %G_CONVERT_ERROR domains.
+ * of the %KH_SYNTAX_ERROR, %G_IO_CHANNEL_ERROR, or %G_CONVERT_ERROR domains.
  *
  * Returns: Whether a token could be successfully read.
  */
-bool scarab_tokenizer_next(ScarabTokenizer *self, ScarabToken **result, GError **err) {
+bool kh_tokenizer_next(KhTokenizer *self, KhToken **result, GError **err) {
 	gunichar c, nc;
 	int line;
 	int col;
@@ -482,7 +482,7 @@ bool scarab_tokenizer_next(ScarabTokenizer *self, ScarabToken **result, GError *
 		} else {
 			_set_error(err,
 				self,
-				SCARAB_SYNTAX_ERROR_MISSING_DELIMITER,
+				KH_SYNTAX_ERROR_MISSING_DELIMITER,
 				"Missing '\"'"
 			);
 			return false;
@@ -497,7 +497,7 @@ bool scarab_tokenizer_next(ScarabTokenizer *self, ScarabToken **result, GError *
 		} else {
 			_set_error(err,
 				self,
-				SCARAB_SYNTAX_ERROR_MISSING_DELIMITER,
+				KH_SYNTAX_ERROR_MISSING_DELIMITER,
 				"Missing '`'"
 			);
 			return false;
@@ -511,7 +511,7 @@ bool scarab_tokenizer_next(ScarabTokenizer *self, ScarabToken **result, GError *
 	} else {
 		_set_error(err,
 			self,
-			SCARAB_SYNTAX_ERROR_UNEXPECTED_CHAR,
+			KH_SYNTAX_ERROR_UNEXPECTED_CHAR,
 		   	g_strdup_printf("Invalid character '%s'(%d)", g_ucs4_to_utf8(&c, 1, NULL, NULL, NULL), c)
 		);
 		return false;

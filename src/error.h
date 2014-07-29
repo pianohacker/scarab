@@ -21,32 +21,32 @@
 
 #include <glib.h>
 
-#define SCARAB_SYNTAX_ERROR scarab_syntax_error_quark()
+#define KH_SYNTAX_ERROR kh_syntax_error_quark()
 
 /**
- * GSDLSyntaxError:
- * @SCARAB_SYNTAX_ERROR_UNEXPECTED_CHAR: An unexpected character was found while reading the source file.
- * @SCARAB_SYNTAX_ERROR_MISSING_DELIMITER: Did not find the end of a string or binary literal before
+ * KhSyntaxError:
+ * @KH_SYNTAX_ERROR_UNEXPECTED_CHAR: An unexpected character was found while reading the source file.
+ * @KH_SYNTAX_ERROR_MISSING_DELIMITER: Did not find the end of a string or binary literal before
  *                                       the end of the file.
- * @SCARAB_SYNTAX_ERROR_MALFORMED: Bad syntax; unexpected token in the input.
- * @SCARAB_SYNTAX_ERROR_BAD_LITERAL: Bad formatting inside a literal, or out of range value.
- * @SCARAB_SYNTAX_ERROR_UNEXPECTED_TAG: Parser handler found an unexpected tag.
- * @SCARAB_SYNTAX_ERROR_MISSING_VALUE: Parser handler was missing a required attribute or value.
- * @SCARAB_SYNTAX_ERROR_BAD_TYPE: Parser handler found a value that could not be converted to the
+ * @KH_SYNTAX_ERROR_MALFORMED: Bad syntax; unexpected token in the input.
+ * @KH_SYNTAX_ERROR_BAD_LITERAL: Bad formatting inside a literal, or out of range value.
+ * @KH_SYNTAX_ERROR_UNEXPECTED_TAG: Parser handler found an unexpected tag.
+ * @KH_SYNTAX_ERROR_MISSING_VALUE: Parser handler was missing a required attribute or value.
+ * @KH_SYNTAX_ERROR_BAD_TYPE: Parser handler found a value that could not be converted to the
  *                              required type.
  * 
- * The last three errors are intended to be used by %GSDLParser parser callbacks.
+ * The last three errors are intended to be used by %KhParser parser callbacks.
  */
 typedef enum {
-	SCARAB_SYNTAX_ERROR_UNEXPECTED_CHAR,
-	SCARAB_SYNTAX_ERROR_MISSING_DELIMITER,
-	SCARAB_SYNTAX_ERROR_MALFORMED,
-	SCARAB_SYNTAX_ERROR_BAD_LITERAL,
-	SCARAB_SYNTAX_ERROR_UNEXPECTED_TAG,
-	SCARAB_SYNTAX_ERROR_MISSING_VALUE,
-	SCARAB_SYNTAX_ERROR_BAD_TYPE,
-} ScarabSyntaxError;
+	KH_SYNTAX_ERROR_UNEXPECTED_CHAR,
+	KH_SYNTAX_ERROR_MISSING_DELIMITER,
+	KH_SYNTAX_ERROR_MALFORMED,
+	KH_SYNTAX_ERROR_BAD_LITERAL,
+	KH_SYNTAX_ERROR_UNEXPECTED_TAG,
+	KH_SYNTAX_ERROR_MISSING_VALUE,
+	KH_SYNTAX_ERROR_BAD_TYPE,
+} KhSyntaxError;
 
-extern GQuark scarab_syntax_error_quark();
+extern GQuark kh_syntax_error_quark();
 
 #endif

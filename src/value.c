@@ -3,52 +3,52 @@
 
 #include "value.h"
 
-ScarabValue* scarab_nil = NULL;
+KhValue* kh_nil = NULL;
 
-ScarabValue* scarab_new(ScarabValueType type) {
-	ScarabValue *value = g_slice_new0(ScarabValue);
+KhValue* kh_new(KhValueType type) {
+	KhValue *value = g_slice_new0(KhValue);
 	value->type = type;
 
 	return value;
 }
 
-ScarabValue* scarab_new_string(const char *val) {
-	ScarabValue *value = scarab_new(SCARAB_STRING);
+KhValue* kh_new_string(const char *val) {
+	KhValue *value = kh_new(KH_STRING);
 	value->d_str = g_strdup(val);
 
 	return value;
 }
 
-ScarabValue* scarab_new_int(long val) {
-	ScarabValue *value = scarab_new(SCARAB_INT);
+KhValue* kh_new_int(long val) {
+	KhValue *value = kh_new(KH_INT);
 	value->d_int = val;
 
 	return value;
 }
 
-ScarabValue* scarab_new_cell(ScarabValue *left, ScarabValue *right) {
-	ScarabValue *value = scarab_new(SCARAB_CELL);
+KhValue* kh_new_cell(KhValue *left, KhValue *right) {
+	KhValue *value = kh_new(KH_CELL);
 	value->d_left = left;
 	value->d_right = right;
 
 	return value;
 }
 
-ScarabValue* scarab_new_symbol(const char *val) {
-	ScarabValue *value = scarab_new(SCARAB_SYMBOL);
+KhValue* kh_new_symbol(const char *val) {
+	KhValue *value = kh_new(KH_SYMBOL);
 	value->d_str = g_intern_string(val);
 
 	return value;
 }
 
 // For _inspect_cell
-void _inspect(ScarabValue *value, GString *result);
+void _inspect(KhValue *value, GString *result);
 
-void _inspect_int(ScarabValue *value, GString *result) {
+void _inspect_int(KhValue *value, GString *result) {
 	g_string_append_printf(result, "%ld", value->d_int);
 }
 
-void _inspect_string(ScarabValue *value, GString *result) {
+void _inspect_string(KhValue *value, GString *result) {
 	char *repr = g_strescape(value->d_str, "");
 	g_string_append_c(result, '"');
 	g_string_append(result, repr);
@@ -56,14 +56,14 @@ void _inspect_string(ScarabValue *value, GString *result) {
 	g_free(repr);
 }
 
-void _inspect_cell(ScarabValue *value, GString *result, bool in_cell) {
+void _inspect_cell(KhValue *value, GString *result, bool in_cell) {
 	if (!in_cell) g_string_append_c(result, '(');
 
-	if (value->d_right->type == SCARAB_CELL) {
+	if (value->d_right->type == KH_CELL) {
 		_inspect(value->d_left, result);
 		g_string_append_c(result, ' ');
 		_inspect_cell(value->d_right, result, true);
-	} else if (value->d_right->type == SCARAB_NIL) {
+	} else if (value->d_right->type == KH_NIL) {
 		_inspect(value->d_left, result);
 	} else {
 		_inspect(value->d_left, result);
@@ -74,27 +74,27 @@ void _inspect_cell(ScarabValue *value, GString *result, bool in_cell) {
 	if (!in_cell) g_string_append_c(result, ')');
 }
 
-void _inspect(ScarabValue *value, GString *result) {
+void _inspect(KhValue *value, GString *result) {
 	switch (value->type) {
-		case SCARAB_NIL:
+		case KH_NIL:
 			g_string_append(result, "nil");
 			break;
-		case SCARAB_INT:
+		case KH_INT:
 			_inspect_int(value, result);
 			break;
-		case SCARAB_STRING:
+		case KH_STRING:
 			_inspect_string(value, result);
 			break;
-		case SCARAB_CELL:
+		case KH_CELL:
 			_inspect_cell(value, result, false);
 			break;
-		case SCARAB_SYMBOL:
+		case KH_SYMBOL:
 			g_string_append(result, value->d_str);
 			break;
 	}
 }
 
-const char* scarab_inspect(ScarabValue *value) {
+const char* kh_inspect(KhValue *value) {
 	GString *result = g_string_new("");
 
 	_inspect(value, result);

@@ -3,42 +3,42 @@
 
 #include <assert.h>
 
-#define SCARAB_IS(val, t) ((val)->type == (t))
-#define SCARAB_IS_NIL(val) SCARAB_IS(val, SCARAB_NIL)
-#define SCARAB_IS_INT(val) SCARAB_IS(val, SCARAB_INT)
-#define SCARAB_IS_STRING(val) SCARAB_IS(val, SCARAB_STRING)
-#define SCARAB_IS_CELL(val) SCARAB_IS(val, SCARAB_CELL)
-#define SCARAB_ASSERT_IS(val, t) assert(SCARAB_IS(val, t));
+#define KH_IS(val, t) ((val)->type == (t))
+#define KH_IS_NIL(val) KH_IS(val, KH_NIL)
+#define KH_IS_INT(val) KH_IS(val, KH_INT)
+#define KH_IS_STRING(val) KH_IS(val, KH_STRING)
+#define KH_IS_CELL(val) KH_IS(val, KH_CELL)
+#define KH_ASSERT_IS(val, t) assert(KH_IS(val, t));
 
 typedef enum {
-	SCARAB_NIL = 0,
-	SCARAB_INT,
-	SCARAB_STRING,
-	SCARAB_CELL,
-	SCARAB_SYMBOL,
-} ScarabValueType;
+	KH_NIL = 0,
+	KH_INT,
+	KH_STRING,
+	KH_CELL,
+	KH_SYMBOL,
+} KhValueType;
 
-typedef struct _ScarabValue {
-	ScarabValueType type;
+typedef struct _KhValue {
+	KhValueType type;
 	
 	union {
 		char *d_str;
 		long d_int;
 		struct {
-			struct _ScarabValue *d_left;
-			struct _ScarabValue *d_right;
+			struct _KhValue *d_left;
+			struct _KhValue *d_right;
 		};
 	};
-} ScarabValue;
+} KhValue;
 
-extern ScarabValue *scarab_nil;
+extern KhValue *kh_nil;
 
-ScarabValue* scarab_new(ScarabValueType type);
-ScarabValue* scarab_new_int(long val);
-ScarabValue* scarab_new_string(const char *val);
-ScarabValue* scarab_new_cell(ScarabValue *left, ScarabValue *right);
-ScarabValue* scarab_new_symbol(const char *val);
+KhValue* kh_new(KhValueType type);
+KhValue* kh_new_int(long val);
+KhValue* kh_new_string(const char *val);
+KhValue* kh_new_cell(KhValue *left, KhValue *right);
+KhValue* kh_new_symbol(const char *val);
 
-const char* scarab_inspect(ScarabValue *value);
+const char* kh_inspect(KhValue *value);
 
 #endif

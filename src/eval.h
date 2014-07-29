@@ -3,9 +3,9 @@
 
 #include "value.h"
 
-typedef struct _ScarabContext ScarabContext;
+typedef struct _KhContext KhContext;
 
-ScarabContext* scarab_context_new();
-ScarabValue* scarab_eval(ScarabContext *ctx, ScarabValue *form);
+KhContext* kh_context_new();
+KhValue* kh_eval(KhContext *ctx, KhValue *form);
 
 #endif

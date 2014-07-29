@@ -25,14 +25,14 @@
 
 //> Types
 /**
- * ScarabTokenType:
+ * KhTokenType:
  * @T_EOF: A virtual token at the end of the input.*
  * @T_IDENTIFIER: An Unicode identifier.
  * @T_NUMBER: A sequence of ASCII digits.
  * @T_DECIMAL: A sequence of digits containing a period.
  * @T_STRING: A string.
  *
- * * These token types have no value, and their #ScarabToken.val field is undefined.
+ * * These token types have no value, and their #KhToken.val field is undefined.
  */
 typedef enum {
 	T_EOF = EOF,
@@ -40,11 +40,11 @@ typedef enum {
 	T_NUMBER,
 	T_DECIMAL,
 	T_STRING,
-} ScarabTokenType;
+} KhTokenType;
 
 /**
- * ScarabToken:
- * @type: The type of the token, either one of %ScarabTokenType or an ASCII character in the range
+ * KhToken:
+ * @type: The type of the token, either one of %KhTokenType or an ASCII character in the range
  *        0-255.
  * @line: The line where the token occurred.
  * @col: The column where the token occurred.
@@ -52,26 +52,26 @@ typedef enum {
  *       single-character token, and %T_EOF and %T_NULL.
  */
 typedef struct {
-	ScarabTokenType type;
+	KhTokenType type;
 
 	guint line;
 	guint col;
 
 	char *val;
-} ScarabToken;
+} KhToken;
 
-typedef struct _ScarabTokenizer ScarabTokenizer;
+typedef struct _KhTokenizer KhTokenizer;
 
 //> Exported Functions
-extern ScarabTokenizer* scarab_tokenizer_new(const char *filename, GError **err);
-extern ScarabTokenizer* scarab_tokenizer_new_from_string(const char *str, GError **err);
+extern KhTokenizer* kh_tokenizer_new(const char *filename, GError **err);
+extern KhTokenizer* kh_tokenizer_new_from_string(const char *str, GError **err);
 
-extern bool scarab_tokenizer_next(ScarabTokenizer *self, ScarabToken **token, GError **err);
-extern char* scarab_tokenizer_get_filename(ScarabTokenizer *self);
+extern bool kh_tokenizer_next(KhTokenizer *self, KhToken **token, GError **err);
+extern char* kh_tokenizer_get_filename(KhTokenizer *self);
 
-extern void scarab_tokenizer_free(ScarabTokenizer *self);
+extern void kh_tokenizer_free(KhTokenizer *self);
 
-extern char* scarab_token_type_name(ScarabTokenType token_type);
-extern void scarab_token_free(ScarabToken *token);
+extern char* kh_token_type_name(KhTokenType token_type);
+extern void kh_token_free(KhToken *token);
 
 #endif
