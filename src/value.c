@@ -12,11 +12,15 @@ KhValue* kh_new(KhValueType type) {
 	return value;
 }
 
-KhValue* kh_new_string(const char *val) {
+KhValue* kh_new_string_take(const char *val) {
 	KhValue *value = kh_new(KH_STRING);
-	value->d_str = g_strdup(val);
+	value->d_str = val;
 
 	return value;
+}
+
+KhValue* kh_new_string(const char *val) {
+	return kh_new_string_take(g_strdup(val));
 }
 
 KhValue* kh_new_int(long val) {
@@ -41,14 +45,21 @@ KhValue* kh_new_symbol(const char *val) {
 	return value;
 }
 
-// For _inspect_cell
-void _inspect(KhValue *value, GString *result);
+KhValue* kh_new_func(KhFunc *val) {
+	KhValue *value = kh_new(KH_FUNC);
+	value->d_func = val;
 
-void _inspect_int(KhValue *value, GString *result) {
+	return value;
+}
+
+// For _inspect_cell
+static void _inspect(KhValue *value, GString *result);
+
+static void _inspect_int(KhValue *value, GString *result) {
 	g_string_append_printf(result, "%ld", value->d_int);
 }
 
-void _inspect_string(KhValue *value, GString *result) {
+static void _inspect_string(KhValue *value, GString *result) {
 	char *repr = g_strescape(value->d_str, "");
 	g_string_append_c(result, '"');
 	g_string_append(result, repr);
@@ -56,7 +67,7 @@ void _inspect_string(KhValue *value, GString *result) {
 	g_free(repr);
 }
 
-void _inspect_cell(KhValue *value, GString *result, bool in_cell) {
+static void _inspect_cell(KhValue *value, GString *result, bool in_cell) {
 	if (!in_cell) g_string_append_c(result, '(');
 
 	if (value->d_right->type == KH_CELL) {
@@ -74,7 +85,7 @@ void _inspect_cell(KhValue *value, GString *result, bool in_cell) {
 	if (!in_cell) g_string_append_c(result, ')');
 }
 
-void _inspect(KhValue *value, GString *result) {
+static void _inspect(KhValue *value, GString *result) {
 	switch (value->type) {
 		case KH_NIL:
 			g_string_append(result, "nil");
@@ -90,6 +101,9 @@ void _inspect(KhValue *value, GString *result) {
 			break;
 		case KH_SYMBOL:
 			g_string_append(result, value->d_str);
+			break;
+		case KH_FUNC:
+			g_string_append(result, "*internal-function*");
 			break;
 	}
 }
