@@ -466,7 +466,7 @@ bool kh_tokenizer_next(KhTokenizer *self, KhToken **result, GError **err) {
 	} else if (c == '-' && _peek(self, &nc, err) && nc < 256 && isdigit(nc)) {
 		*result = _maketoken(T_NUMBER, line, col);
 		return _tokenize_number(self, *result, c, err);
-	} else if (c < 256 && strchr(",{}()[]", (char) c)) {
+	} else if (c < 256 && strchr(",'{}()[]", (char) c)) {
 		*result = _maketoken(c, line, col);
 		return true;
 	} else if (c < 256 && isdigit((char) c)) {

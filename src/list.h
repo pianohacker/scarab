@@ -3,7 +3,7 @@
 
 #include "value.h"
 
-#define KH_ITERATE(list) for (; list != kh_nil; list = list->d_right)
+#define KH_ITERATE(list) for (KhValue *elem = list; elem != kh_nil; elem = elem->d_right)
 
 long kh_list_length(KhValue *list);
 

@@ -131,6 +131,7 @@ static bool _expect(KhParserContext *self, KhToken *token, GError **err, ...) {
 static bool _token_is_value(KhToken *token) {
 	// The cast to int is largely to shut up the gcc enum niceties.
 	switch ((int) token->type) {
+		case '\'':
 		case '(':
 		case '[':
 		case '{':
@@ -312,9 +313,30 @@ static KhValue* _parse_open_list(KhParserContext *self, KhTokenType terminator, 
 
 static KhValue* _parse_value(KhParserContext *self, GError **err) {
 	KhToken *token;
-	KhValue *new_value;
+	KhValue *new_value = NULL;
 
 	REQUIRE(_peek(self, &token, err));
+
+	bool quote_value = false;
+
+	if (token->type == '\'') {
+		_consume(self);
+		kh_token_free(token);
+		quote_value = true;
+
+		REQUIRE(_peek(self, &token, err));
+	}
+
+	if (!_token_is_value(token) || token->type == '\'') {
+		_error(
+			self,
+			token,
+			KH_SYNTAX_ERROR_MALFORMED,
+			g_strdup_printf("Unexpected %s, expected a value", kh_token_type_name(token->type)),
+			err);
+
+		return NULL;
+	}
 
 	if (token->type == '(' || token->type == '[' || token->type == '{') {
 		KhTokenType terminator;
@@ -349,6 +371,10 @@ static KhValue* _parse_value(KhParserContext *self, GError **err) {
 		new_value = _parse_string(self, err);
 	} else if (token->type == T_IDENTIFIER) {
 		new_value = _parse_identifier(self, err);
+	}
+
+	if (quote_value && new_value) {
+		return kh_new_cell(kh_new_symbol("quote"), kh_new_cell(new_value, kh_nil));
 	}
 
 	return new_value;
