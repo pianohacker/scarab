@@ -19,8 +19,10 @@ KhScope* kh_context_push_scope(KhContext *ctx);
 KhScope* kh_context_pop_scope(KhContext *ctx);
 
 KhValue* kh_eval(KhContext *ctx, KhValue *form);
+KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv);
 
 typedef KhValue* (*KhCFunc)(KhContext *ctx, long argc, KhValue **argv);
+KhFunc* kh_func_new(KhValue *form, long argc, char **argnames, KhScope *scope, bool is_direct);
 KhFunc* kh_func_new_c(KhCFunc c_func, bool is_direct);
 
 #endif

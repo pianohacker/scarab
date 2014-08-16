@@ -4,6 +4,20 @@
 #include "list.h"
 #include "value.h"
 
+// Utility functions
+//
+// This parses a list of argument descriptions into its component pieces.
+static long _parse_arg_desc(KhValue *arg_desc, char ***func_argnames) {
+	long argc = kh_list_length(arg_desc);
+	*func_argnames = g_malloc(sizeof(char*) * argc);
+
+	long i = 0;
+	KH_ITERATE(arg_desc) (*func_argnames)[i++] = elem->d_left->d_str;
+
+	return argc;
+}
+
+// Builtin definitions
 static KhValue* _add(KhContext *ctx, long argc, KhValue **argv) {
 	int result = 0;
 
@@ -16,6 +30,13 @@ static KhValue* _add(KhContext *ctx, long argc, KhValue **argv) {
 
 static KhValue* _inspect(KhContext *ctx, long argc, KhValue **argv) {
 	return kh_new_string_take(kh_inspect(argv[0]));
+}
+
+static KhValue* _lambda(KhContext *ctx, long argc, KhValue **argv) {
+	char **func_argnames;
+	long func_argc = _parse_arg_desc(argv[0], &func_argnames);
+
+	return kh_new_func(kh_func_new(argv[1], func_argc, func_argnames, kh_context_get_scope(ctx), false));
 }
 
 static KhValue* _let(KhContext *ctx, long argc, KhValue **argv) {
@@ -43,6 +64,7 @@ void _register_builtins(KhScope *_builtins_scope) {
 	_REG(+, _add);
 	_REG(inspect, _inspect);
 	_REG_DIRECT(inspect-direct, _inspect);
+	_REG_DIRECT(lambda, _lambda);
 	_REG_DIRECT(let, _let);
 	_REG_DIRECT(quote, _quote);
 }

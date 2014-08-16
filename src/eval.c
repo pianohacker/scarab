@@ -21,9 +21,14 @@ struct _KhScope {
 	GHashTable *table;
 };
 
-// Activation record for a function; currently only supports C functions.
 struct _KhFunc {
+	KhValue *form;
+	KhScope *scope;
+	long argc;
+	char **argnames;
+
 	KhCFunc c_func;
+
 	bool is_direct;
 };
 
@@ -136,15 +141,45 @@ KhValue* kh_eval(KhContext *ctx, KhValue *form) {
 	KhValue *argv[argc];
 
 	int i = 0;
-	KhFunc *func = head->d_func;
+	KH_ITERATE(form->d_right) argv[i++] = elem->d_left;
 
-	if (func->is_direct) {
-		KH_ITERATE(form->d_right) argv[i++] = elem->d_left;
-	} else {
-		KH_ITERATE(form->d_right) argv[i++] = kh_eval(ctx, elem->d_left);
+	return kh_apply(ctx, head->d_func, argc, argv);
+}
+
+KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv) {
+	if (!func->is_direct) {
+		for (long i = 0; i < argc; i++) argv[i] = kh_eval(ctx, argv[i]);
 	}
 
-	return head->d_func->c_func(ctx, argc, argv);
+	if (func->c_func) {
+		return func->c_func(ctx, argc, argv);
+	} else {
+		KhScope *prev_scope = kh_context_get_scope(ctx);
+		KhScope *func_scope = kh_scope_new(func->scope);
+
+		if (argc != func->argc) return kh_nil;
+
+		for (long i = 0; i < argc; i++) {
+			kh_scope_add(func_scope, func->argnames[i], argv[i]);
+		}
+
+		kh_context_set_scope(ctx, func_scope);
+		KhValue *result = kh_eval(ctx, func->form);
+		kh_context_set_scope(ctx, prev_scope);
+
+		return result;
+	}
+}
+
+KhFunc* kh_func_new(KhValue *form, long argc, char **argnames, KhScope *scope, bool is_direct) {
+	KhFunc *result = g_slice_new0(KhFunc);
+	result->form = form;
+	result->argc = argc;
+	result->argnames = argnames;
+	result->scope = scope;
+	result->is_direct = is_direct;
+
+	return result;
 }
 
 KhFunc* kh_func_new_c(KhCFunc c_func, bool is_direct) {
