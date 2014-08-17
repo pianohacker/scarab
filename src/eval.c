@@ -4,12 +4,14 @@
 
 #include "eval.h"
 #include "list.h"
+#include "util.h"
 #include "value.h"
 
 // Core context object; holds information on current execution context.
 // This will change as execution goes through various scopes and environments.
 struct _KhContext {
 	KhScope *scope;
+	KhValue *error;
 };
 
 // Scope object; holds a set of values and a pointer to the parent.
@@ -22,6 +24,8 @@ struct _KhScope {
 };
 
 struct _KhFunc {
+	const gchar *name;
+
 	KhValue *form;
 	KhScope *scope;
 	long argc;
@@ -120,20 +124,23 @@ KhValue* kh_eval(KhContext *ctx, KhValue *form) {
 		case KH_SYMBOL:
 			value = kh_scope_lookup(ctx->scope, form->d_str);
 
-			return value == NULL ? kh_nil : value;
+			if (value == NULL) KH_FAIL(undefined-variable, "%s", form->d_str);
+
+			return value;
 		case KH_CELL:
 			break;
 	}
 
 	// Easiest way to resolve symbols/lambdas referring to funcs
 	KhValue *head = kh_eval(ctx, form->d_left);
+	_REQUIRE(head);
 
 	long form_len = kh_list_length(form);
 	if (!KH_IS_FUNC(head)) {
 		if (form_len == 1) {
 			return head;
 		} else {
-			return kh_nil;
+			KH_FAIL(not-func, "Tried to evaluate %s as a function", kh_inspect(head));
 		}
 	}
 
@@ -148,8 +155,13 @@ KhValue* kh_eval(KhContext *ctx, KhValue *form) {
 
 KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv) {
 	if (!func->is_direct) {
-		for (long i = 0; i < argc; i++) argv[i] = kh_eval(ctx, argv[i]);
+		for (long i = 0; i < argc; i++) {
+			argv[i] = kh_eval(ctx, argv[i]);
+			_REQUIRE(argv[i]);
+		}
 	}
+
+	if (argc != func->argc) KH_FAIL(invalid-call, "Called %s with %ld arguments, expected %ld", func->name, argc, func->argc);
 
 	if (func->c_func) {
 		return func->c_func(ctx, argc, argv);
@@ -157,22 +169,30 @@ KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv) {
 		KhScope *prev_scope = kh_context_get_scope(ctx);
 		KhScope *func_scope = kh_scope_new(func->scope);
 
-		if (argc != func->argc) return kh_nil;
-
 		for (long i = 0; i < argc; i++) {
 			kh_scope_add(func_scope, func->argnames[i], argv[i]);
 		}
 
 		kh_context_set_scope(ctx, func_scope);
 		KhValue *result = kh_eval(ctx, func->form);
+		_REQUIRE(result);
 		kh_context_set_scope(ctx, prev_scope);
 
 		return result;
 	}
 }
 
-KhFunc* kh_func_new(KhValue *form, long argc, char **argnames, KhScope *scope, bool is_direct) {
+void kh_set_error(KhContext *ctx, KhValue *error) {
+	ctx->error = error;
+}
+
+KhValue* kh_get_error(KhContext *ctx) {
+	return ctx->error;
+}
+
+KhFunc* kh_func_new(const gchar *name, KhValue *form, long argc, char **argnames, KhScope *scope, bool is_direct) {
 	KhFunc *result = g_slice_new0(KhFunc);
+	result->name = g_strdup(name);
 	result->form = form;
 	result->argc = argc;
 	result->argnames = argnames;
@@ -182,10 +202,16 @@ KhFunc* kh_func_new(KhValue *form, long argc, char **argnames, KhScope *scope, b
 	return result;
 }
 
-KhFunc* kh_func_new_c(KhCFunc c_func, bool is_direct) {
+KhFunc* kh_func_new_c(const gchar *name, KhCFunc c_func, long argc, bool is_direct) {
 	KhFunc *result = g_slice_new0(KhFunc);
+	result->name = g_strdup(name);
 	result->c_func = c_func;
+	result->argc = argc;
 	result->is_direct = is_direct;
 
 	return result;
+}
+
+const gchar* kh_func_get_name(KhFunc *func) {
+	return func->name;
 }

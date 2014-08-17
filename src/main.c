@@ -32,8 +32,12 @@ int main(int argc, char **argv) {
 		KH_ITERATE(forms) {
 			KhValue *value = kh_eval(ctx, forms->d_left);
 
-			if (print_number) printf("%d. ", i++);
-			puts(kh_inspect(value));
+			if (value == NULL) {
+				printf("Error: %s\n", kh_inspect(kh_get_error(ctx)));
+			} else {
+				if (print_number) printf("%d. ", i++);
+				puts(kh_inspect(value));
+			}
 		}
 	}
 }

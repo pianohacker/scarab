@@ -1,6 +1,7 @@
 #include <glib.h>
 #include <stdbool.h>
 
+#include "eval.h"
 #include "value.h"
 
 KhValue* kh_nil = NULL;
@@ -12,7 +13,7 @@ KhValue* kh_new(KhValueType type) {
 	return value;
 }
 
-KhValue* kh_new_string_take(const char *val) {
+KhValue* kh_new_string_take(char *val) {
 	KhValue *value = kh_new(KH_STRING);
 	value->d_str = val;
 
@@ -40,7 +41,9 @@ KhValue* kh_new_cell(KhValue *left, KhValue *right) {
 
 KhValue* kh_new_symbol(const char *val) {
 	KhValue *value = kh_new(KH_SYMBOL);
-	value->d_str = g_intern_string(val);
+	// FIXME: at some point, we need to be able to mark strings that should not be freed when their
+	// value is garbage-collected. This won't really matter until we write a garbage collector.
+	value->d_str = (char *) g_intern_string(val);
 
 	return value;
 }
@@ -85,6 +88,10 @@ static void _inspect_cell(KhValue *value, GString *result, bool in_cell) {
 	if (!in_cell) g_string_append_c(result, ')');
 }
 
+static void _inspect_func(KhValue *value, GString *result) {
+	g_string_append_printf(result, "*function \"%s\"*", kh_func_get_name(value->d_func));
+}
+
 static void _inspect(KhValue *value, GString *result) {
 	switch (value->type) {
 		case KH_NIL:
@@ -103,12 +110,12 @@ static void _inspect(KhValue *value, GString *result) {
 			g_string_append(result, value->d_str);
 			break;
 		case KH_FUNC:
-			g_string_append(result, "*internal-function*");
+			_inspect_func(value, result);
 			break;
 	}
 }
 
-const char* kh_inspect(KhValue *value) {
+char* kh_inspect(KhValue *value) {
 	GString *result = g_string_new("");
 
 	_inspect(value, result);

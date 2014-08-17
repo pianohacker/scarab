@@ -43,11 +43,11 @@ extern KhValue *kh_nil;
 KhValue* kh_new(KhValueType type);
 KhValue* kh_new_int(long val);
 KhValue* kh_new_string(const char *val);
-KhValue* kh_new_string_take(const char *val);
+KhValue* kh_new_string_take(char *val);
 KhValue* kh_new_cell(KhValue *left, KhValue *right);
 KhValue* kh_new_symbol(const char *val);
 KhValue* kh_new_func(KhFunc *val);
 
-const char* kh_inspect(KhValue *value);
+char* kh_inspect(KhValue *value);
 
 #endif
