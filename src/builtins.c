@@ -29,8 +29,27 @@ static KhValue* _add(KhContext *ctx, long argc, KhValue **argv) {
 	return kh_new_int(result);
 }
 
+static KhValue* _create_func(KhContext *ctx, const gchar *name, KhValue *arg_desc, KhValue *form, bool is_direct) {
+	char **func_argnames;
+	long func_argc = _parse_arg_desc(arg_desc, &func_argnames);
+
+	return kh_new_func(kh_func_new(name, form, func_argc, func_argnames, kh_context_get_scope(ctx), false));
+}
+
 static KhValue* _eval(KhContext *ctx, long argc, KhValue **argv) {
 	return kh_eval(ctx, argv[0]);
+}
+
+static KhValue* _def(KhContext *ctx, long argc, KhValue **argv) {
+	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, _create_func(ctx, argv[0]->d_str, argv[1], argv[2], false));
+
+	return kh_nil;
+}
+
+static KhValue* _def_direct(KhContext *ctx, long argc, KhValue **argv) {
+	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, _create_func(ctx, argv[0]->d_str, argv[1], argv[2], true));
+
+	return kh_nil;
 }
 
 static KhValue* _inspect(KhContext *ctx, long argc, KhValue **argv) {
@@ -38,10 +57,7 @@ static KhValue* _inspect(KhContext *ctx, long argc, KhValue **argv) {
 }
 
 static KhValue* _lambda(KhContext *ctx, long argc, KhValue **argv) {
-	char **func_argnames;
-	long func_argc = _parse_arg_desc(argv[0], &func_argnames);
-
-	return kh_new_func(kh_func_new("*lambda*", argv[1], func_argc, func_argnames, kh_context_get_scope(ctx), false));
+	return _create_func(ctx, "*lambda*", argv[0], argv[1], false);
 }
 
 static KhValue* _let(KhContext *ctx, long argc, KhValue **argv) {
@@ -59,6 +75,12 @@ static KhValue* _let(KhContext *ctx, long argc, KhValue **argv) {
 	return result;
 }
 
+static KhValue* _set_bang(KhContext *ctx, long argc, KhValue **argv) {
+	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, argv[1]);
+
+	return kh_nil;
+}
+
 static KhValue* _quote(KhContext *ctx, long argc, KhValue **argv) {
 	return argv[0];
 }
@@ -68,10 +90,13 @@ static KhValue* _quote(KhContext *ctx, long argc, KhValue **argv) {
 
 void _register_builtins(KhScope *_builtins_scope) {
 	_REG(+, _add, 2);
+	_REG_DIRECT(def, _def, 3);
+	_REG_DIRECT(def-direct, _def_direct, 3);
 	_REG(eval, _eval, 1);
 	_REG(inspect, _inspect, 1);
 	_REG_DIRECT(inspect-direct, _inspect, 1);
 	_REG_DIRECT(lambda, _lambda, 2);
 	_REG_DIRECT(let, _let, 2);
+	_REG_DIRECT(set!, _set_bang, 2);
 	_REG_DIRECT(quote, _quote, 1);
 }

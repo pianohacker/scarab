@@ -358,7 +358,7 @@ static bool _tokenize_identifier(KhTokenizer *self, KhToken *result, gunichar c,
 
 	int i = g_unichar_to_utf8(c, output);
 
-	while (_peek(self, &c, err) && (c == '_' || c == '-' || g_unichar_isalpha(c) || g_unichar_isdigit(c))) {
+	while (_peek(self, &c, err) && (c == '_' || c == '-' || g_unichar_isalpha(c) || g_unichar_isdigit(c) || g_unichar_ispunct(c))) {
 		GROW_IF_NEEDED(output = result->val, i + 5, length);
 
 		_consume(self);
