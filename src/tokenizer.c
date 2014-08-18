@@ -31,6 +31,8 @@
 #define GROW_IF_NEEDED(str, i, alloc) if (i >= alloc) { alloc = alloc * 2 + 1; str = g_realloc(str, alloc); }
 #define REQUIRE(expr) if (!expr) return false;
 
+#define _SPECIAL_PUNCT ",'{}()[]"
+
 //> Internal Types
 struct _KhTokenizer {
 	char *filename;
@@ -358,7 +360,7 @@ static bool _tokenize_identifier(KhTokenizer *self, KhToken *result, gunichar c,
 
 	int i = g_unichar_to_utf8(c, output);
 
-	while (_peek(self, &c, err) && (c == '_' || c == '-' || g_unichar_isalpha(c) || g_unichar_isdigit(c) || g_unichar_ispunct(c))) {
+	while (_peek(self, &c, err) && !(c < 256 && strchr(_SPECIAL_PUNCT, (char) c)) && (c == '_' || c == '-' || g_unichar_isalpha(c) || g_unichar_isdigit(c) || g_unichar_ispunct(c))) {
 		GROW_IF_NEEDED(output = result->val, i + 5, length);
 
 		_consume(self);
@@ -466,7 +468,7 @@ bool kh_tokenizer_next(KhTokenizer *self, KhToken **result, GError **err) {
 	} else if (c == '-' && _peek(self, &nc, err) && nc < 256 && isdigit(nc)) {
 		*result = _maketoken(T_NUMBER, line, col);
 		return _tokenize_number(self, *result, c, err);
-	} else if (c < 256 && strchr(",'{}()[]", (char) c)) {
+	} else if (c < 256 && strchr(_SPECIAL_PUNCT, (char) c)) {
 		*result = _maketoken(c, line, col);
 		return true;
 	} else if (c < 256 && isdigit((char) c)) {

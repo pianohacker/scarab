@@ -33,7 +33,7 @@ static KhValue* _create_func(KhContext *ctx, const gchar *name, KhValue *arg_des
 	char **func_argnames;
 	long func_argc = _parse_arg_desc(arg_desc, &func_argnames);
 
-	return kh_new_func(kh_func_new(name, form, func_argc, func_argnames, kh_context_get_scope(ctx), false));
+	return kh_new_func(kh_func_new(name, form, func_argc, func_argnames, kh_context_get_scope(ctx), is_direct));
 }
 
 static KhValue* _eval(KhContext *ctx, long argc, KhValue **argv) {

@@ -180,7 +180,13 @@ static KhValue* _parse_identifier(KhParserContext *self, GError **err) {
 	KhToken *token;
 	REQUIRE(_read(self, &token, err));
 
-	KhValue *result = kh_new_symbol(token->val);
+	KhValue *result;
+
+	if (strcmp(token->val, "nil") == 0) {
+		result = kh_nil;
+	} else {
+		result = kh_new_symbol(token->val);
+	}
 
 	kh_token_free(token);
 
