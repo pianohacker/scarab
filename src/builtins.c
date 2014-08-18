@@ -75,7 +75,7 @@ static KhValue* _let(KhContext *ctx, long argc, KhValue **argv) {
 	return result;
 }
 
-static KhValue* _set_bang(KhContext *ctx, long argc, KhValue **argv) {
+static KhValue* _set(KhContext *ctx, long argc, KhValue **argv) {
 	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, argv[1]);
 
 	return kh_nil;
@@ -90,6 +90,7 @@ static KhValue* _quote(KhContext *ctx, long argc, KhValue **argv) {
 
 void _register_builtins(KhScope *_builtins_scope) {
 	_REG(+, _add, 2);
+	_REG_DIRECT(=, _set, 2);
 	_REG_DIRECT(def, _def, 3);
 	_REG_DIRECT(def-direct, _def_direct, 3);
 	_REG(eval, _eval, 1);
@@ -97,6 +98,5 @@ void _register_builtins(KhScope *_builtins_scope) {
 	_REG_DIRECT(inspect-direct, _inspect, 1);
 	_REG_DIRECT(lambda, _lambda, 2);
 	_REG_DIRECT(let, _let, 2);
-	_REG_DIRECT(set!, _set_bang, 2);
 	_REG_DIRECT(quote, _quote, 1);
 }
