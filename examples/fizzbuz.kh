@@ -1,13 +1,13 @@
-def fizzbuzz () [
-	loop x 1 100 [
-		print (cond [zero? (mod x 15), "FizzBuzz"]
-                    [zero? (mod x 3), "Fizz"]
-					[zero? (mod x 5), "Buzz"]
+def fizzbuzz () {
+	loop x 1 100 {
+		print (cond {zero? (mod x 15), "FizzBuzz"}
+                    {zero? (mod x 3), "Fizz"}
+					{zero? (mod x 5), "Buzz"}
 					(true x)
                     ),
         print "\n"   
-    ]
-]
+    }
+}
 
 (def fizzbuzz () (
     (loop x 1 100 (

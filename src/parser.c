@@ -230,7 +230,7 @@ static KhValue* _parse_operator_list(KhParserContext *self, KhTokenType terminat
 
 		REQUIRE(_peek(self, &token, err));
 
-		if (token->type == '}') break;
+		if (token->type == terminator) break;
 
 		EXPECT(T_IDENTIFIER);
 
@@ -355,11 +355,11 @@ static KhValue* _parse_value(KhParserContext *self, GError **err) {
 				break;
 			case '[':
 				terminator = ']';
-				new_value = _parse_open_list(self, terminator, err);
+				new_value = _parse_operator_list(self, terminator, err);
 				break;
 			case '{':
 				terminator = '}';
-				new_value = _parse_operator_list(self, terminator, err);
+				new_value = _parse_open_list(self, terminator, err);
 				break;
 			default: g_warn_if_reached();
 		}
