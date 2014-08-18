@@ -1,4 +1,5 @@
 #include <glib.h>
+#include <limits.h>
 
 #include "eval.h"
 #include "list.h"
@@ -33,7 +34,7 @@ static KhValue* _create_func(KhContext *ctx, const gchar *name, KhValue *arg_des
 	char **func_argnames;
 	long func_argc = _parse_arg_desc(arg_desc, &func_argnames);
 
-	return kh_new_func(kh_func_new(name, form, func_argc, func_argnames, kh_context_get_scope(ctx), is_direct));
+	return kh_new_func(kh_func_new(name, form, func_argc, func_argc, func_argnames, kh_context_get_scope(ctx), is_direct));
 }
 
 static KhValue* _eval(KhContext *ctx, long argc, KhValue **argv) {
@@ -85,18 +86,18 @@ static KhValue* _quote(KhContext *ctx, long argc, KhValue **argv) {
 	return argv[0];
 }
 
-#define _REG(name, func, argc) kh_scope_add(_builtins_scope, #name, kh_new_func(kh_func_new_c(#name, func, argc, false)));
-#define _REG_DIRECT(name, func, argc) kh_scope_add(_builtins_scope, #name, kh_new_func(kh_func_new_c(#name, func, argc, true)));
+#define _REG(name, func, argc, is_direct) kh_scope_add(_builtins_scope, #name, kh_new_func(kh_func_new_c(#name, func, argc, argc, is_direct)));
+#define _REG_VARARGS(name, func, min_argc, max_argc, is_direct) kh_scope_add(_builtins_scope, #name, kh_new_func(kh_func_new_c(#name, func, min_argc, max_argc, is_direct)));
 
 void _register_builtins(KhScope *_builtins_scope) {
-	_REG(+, _add, 2);
-	_REG_DIRECT(=, _set, 2);
-	_REG_DIRECT(def, _def, 3);
-	_REG_DIRECT(def-direct, _def_direct, 3);
-	_REG(eval, _eval, 1);
-	_REG(inspect, _inspect, 1);
-	_REG_DIRECT(inspect-direct, _inspect, 1);
-	_REG_DIRECT(lambda, _lambda, 2);
-	_REG_DIRECT(let, _let, 2);
-	_REG_DIRECT(quote, _quote, 1);
+	_REG_VARARGS(+, _add, 1, LONG_MAX, false);
+	_REG(=, _set, 2, true);
+	_REG(def, _def, 3, true);
+	_REG(def-direct, _def_direct, 3, true);
+	_REG(eval, _eval, 1, false);
+	_REG(inspect, _inspect, 1, false);
+	_REG(inspect-direct, _inspect, 1, true);
+	_REG(lambda, _lambda, 2, true);
+	_REG(let, _let, 2, true);
+	_REG(quote, _quote, 1, true);
 }

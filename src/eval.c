@@ -1,4 +1,5 @@
 #include <glib.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <string.h>
 
@@ -28,7 +29,8 @@ struct _KhFunc {
 
 	KhValue *form;
 	KhScope *scope;
-	long argc;
+	long min_argc;
+	long max_argc;
 	char **argnames;
 
 	KhCFunc c_func;
@@ -161,7 +163,15 @@ KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv) {
 		}
 	}
 
-	if (argc != func->argc) KH_FAIL(invalid-call, "Called %s with %ld arguments, expected %ld", func->name, argc, func->argc);
+	if (argc < func->min_argc || argc > func->max_argc) {
+		if (func->max_argc == LONG_MAX) {
+			KH_FAIL(invalid-call, "Called %s with %ld arguments, expected %ld or more", func->name, argc, func->min_argc);
+		} else if (func->min_argc == func->max_argc) {
+			KH_FAIL(invalid-call, "Called %s with %ld arguments, expected %ld", func->name, argc, func->min_argc);
+		} else {
+			KH_FAIL(invalid-call, "Called %s with %ld arguments, expected between %ld and %ld", func->name, argc, func->min_argc, func->max_argc);
+		}
+	}
 
 	if (func->c_func) {
 		return func->c_func(ctx, argc, argv);
@@ -190,11 +200,12 @@ KhValue* kh_get_error(KhContext *ctx) {
 	return ctx->error;
 }
 
-KhFunc* kh_func_new(const gchar *name, KhValue *form, long argc, char **argnames, KhScope *scope, bool is_direct) {
+KhFunc* kh_func_new(const gchar *name, KhValue *form, long min_argc, long max_argc, char **argnames, KhScope *scope, bool is_direct) {
 	KhFunc *result = g_slice_new0(KhFunc);
 	result->name = g_strdup(name);
 	result->form = form;
-	result->argc = argc;
+	result->min_argc = min_argc;
+	result->max_argc = max_argc;
 	result->argnames = argnames;
 	result->scope = scope;
 	result->is_direct = is_direct;
@@ -202,11 +213,12 @@ KhFunc* kh_func_new(const gchar *name, KhValue *form, long argc, char **argnames
 	return result;
 }
 
-KhFunc* kh_func_new_c(const gchar *name, KhCFunc c_func, long argc, bool is_direct) {
+KhFunc* kh_func_new_c(const gchar *name, KhCFunc c_func, long min_argc, long max_argc, bool is_direct) {
 	KhFunc *result = g_slice_new0(KhFunc);
 	result->name = g_strdup(name);
 	result->c_func = c_func;
-	result->argc = argc;
+	result->min_argc = min_argc;
+	result->max_argc = max_argc;
 	result->is_direct = is_direct;
 
 	return result;

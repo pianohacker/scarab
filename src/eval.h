@@ -28,8 +28,8 @@ KhValue* kh_eval(KhContext *ctx, KhValue *form);
 KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv);
 
 typedef KhValue* (*KhCFunc)(KhContext *ctx, long argc, KhValue **argv);
-KhFunc* kh_func_new(const gchar *name, KhValue *form, long argc, char **argnames, KhScope *scope, bool is_direct);
-KhFunc* kh_func_new_c(const gchar *name, KhCFunc c_func, long argc, bool is_direct);
+KhFunc* kh_func_new(const gchar *name, KhValue *form, long min_argc, long max_argc, char **argnames, KhScope *scope, bool is_direct);
+KhFunc* kh_func_new_c(const gchar *name, KhCFunc c_func, long min_argc, long max_argc, bool is_direct);
 const gchar* kh_func_get_name(KhFunc *func);
 
 #endif
