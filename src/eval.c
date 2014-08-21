@@ -11,8 +11,12 @@
 // Core context object; holds information on current execution context.
 // This will change as execution goes through various scopes and environments.
 struct _KhContext {
+	KhScope *global_scope;
 	KhScope *scope;
 	KhValue *error;
+
+	GHashTable *field_sets;
+	GHashTable *prototypes;
 };
 
 // Scope object; holds a set of values and a pointer to the parent.
@@ -41,6 +45,7 @@ struct _KhFunc {
 static KhScope *_builtins_scope = NULL;
 
 extern void _register_builtins(KhScope *_builtins_scope);
+extern void _register_globals(KhContext *ctx);
 
 // Create a new scope. NULL can be passed as the parent, which is usually only done for either the
 // builtins scope or sandboxed scopes.
@@ -55,7 +60,7 @@ KhScope* kh_scope_new(KhScope *parent) {
 
 void kh_scope_add(KhScope *scope, char *name, KhValue *val) {
 	// This cast is okay as the interned string is guaranteed to continue to exist
-	g_hash_table_insert(scope->table, (gchar*) g_intern_string(name), val);
+	g_hash_table_replace(scope->table, (gchar*) g_intern_string(name), val);
 }
 
 KhValue* kh_scope_lookup(KhScope *scope, char *name) {
@@ -82,7 +87,11 @@ KhContext* kh_context_new() {
 	}
 
 	KhContext *ctx = g_slice_new0(KhContext);
-	ctx->scope = kh_scope_new(_builtins_scope); // This is the global scope for the new context
+	ctx->global_scope = ctx->scope = kh_scope_new(_builtins_scope); // The global scope for the new context
+	ctx->field_sets = g_hash_table_new(g_direct_hash, g_direct_equal); // The mapping of KhValue locations to field sets
+	ctx->prototypes = g_hash_table_new(g_direct_hash, g_direct_equal); // The mapping of KhValues to their prototype KhValues
+
+	_register_globals(ctx);
 
 	return ctx;
 }
@@ -114,6 +123,108 @@ KhScope* kh_context_pop_scope(KhContext *ctx) {
 	return scope;
 }
 
+void kh_set_error(KhContext *ctx, KhValue *error) {
+	ctx->error = error;
+}
+
+KhValue* kh_get_error(KhContext *ctx) {
+	return ctx->error;
+}
+
+KhFunc* kh_func_new(const gchar *name, KhValue *form, long min_argc, long max_argc, char **argnames, KhScope *scope, bool is_direct) {
+	KhFunc *result = g_slice_new0(KhFunc);
+	result->name = g_strdup(name);
+	result->form = form;
+	result->min_argc = min_argc;
+	result->max_argc = max_argc;
+	result->argnames = argnames;
+	result->scope = scope;
+	result->is_direct = is_direct;
+
+	return result;
+}
+
+KhFunc* kh_func_new_c(const gchar *name, KhCFunc c_func, long min_argc, long max_argc, bool is_direct) {
+	KhFunc *result = g_slice_new0(KhFunc);
+	result->name = g_strdup(name);
+	result->c_func = c_func;
+	result->min_argc = min_argc;
+	result->max_argc = max_argc;
+	result->is_direct = is_direct;
+
+	return result;
+}
+
+const gchar* kh_func_get_name(KhFunc *func) {
+	return func->name;
+}
+
+static GHashTable* _get_field_set(KhContext *ctx, KhValue *value, gboolean autovivify) {
+	GHashTable *result = g_hash_table_lookup(ctx->field_sets, value);
+
+	if (result == NULL && autovivify) {
+		result = g_hash_table_new(g_str_hash, g_direct_equal);
+		g_hash_table_replace(ctx->field_sets, value, result);
+	}
+
+	return result;
+}
+
+static KhValue* _get_prototype(KhContext *ctx, KhValue *value) {
+	KhValue *result = g_hash_table_lookup(ctx->prototypes, value);
+
+	if (result == NULL) {
+		gchar *global_name = NULL;
+		switch (value->type) {
+			case KH_INT: global_name = "int"; break;
+			case KH_STRING: global_name = "string"; break;
+			case KH_CELL: global_name = "cell"; break;
+			case KH_SYMBOL: global_name = "symbol"; break;
+			case KH_FUNC: global_name = "func"; break;
+			default: break;
+		}
+
+		if (global_name) return kh_scope_lookup(ctx->global_scope, global_name);
+	}
+
+	return result;
+}
+
+KhValue* kh_get_field(KhContext *ctx, KhValue *value, const gchar *name) {
+	if (value == kh_nil) return NULL;
+
+	name = g_intern_string(name);
+
+	while (value != NULL) {
+		GHashTable *field_set = _get_field_set(ctx, value, false);
+
+		if (field_set) {
+			KhValue *result = g_hash_table_lookup(field_set, name);
+
+			if (result) return result;
+		}
+
+		value = _get_prototype(ctx, value);
+	}
+
+	return NULL;
+}
+
+bool kh_set_field(KhContext *ctx, KhValue *value, const gchar *name, KhValue *content) {
+	if (value == kh_nil) {
+		KH_ERROR(bad-field, "cannot set properties on nil");	
+		return false;
+	}
+
+	const gchar *intern_name = g_intern_string(name);
+
+	GHashTable *field_set = _get_field_set(ctx, value, true);
+	// We're playing fast and loose with casting as we never destroy keys
+	g_hash_table_replace(field_set, (gchar*) intern_name, content);
+
+	return true;
+}
+
 KhValue* kh_eval(KhContext *ctx, KhValue *form) {
 	KhValue *value;
 
@@ -122,6 +233,7 @@ KhValue* kh_eval(KhContext *ctx, KhValue *form) {
 		case KH_INT:
 		case KH_STRING:
 		case KH_FUNC:
+		case KH_THING:
 			return form;
 		case KH_SYMBOL:
 			value = kh_scope_lookup(ctx->scope, form->d_str);
@@ -190,40 +302,4 @@ KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv) {
 
 		return result;
 	}
-}
-
-void kh_set_error(KhContext *ctx, KhValue *error) {
-	ctx->error = error;
-}
-
-KhValue* kh_get_error(KhContext *ctx) {
-	return ctx->error;
-}
-
-KhFunc* kh_func_new(const gchar *name, KhValue *form, long min_argc, long max_argc, char **argnames, KhScope *scope, bool is_direct) {
-	KhFunc *result = g_slice_new0(KhFunc);
-	result->name = g_strdup(name);
-	result->form = form;
-	result->min_argc = min_argc;
-	result->max_argc = max_argc;
-	result->argnames = argnames;
-	result->scope = scope;
-	result->is_direct = is_direct;
-
-	return result;
-}
-
-KhFunc* kh_func_new_c(const gchar *name, KhCFunc c_func, long min_argc, long max_argc, bool is_direct) {
-	KhFunc *result = g_slice_new0(KhFunc);
-	result->name = g_strdup(name);
-	result->c_func = c_func;
-	result->min_argc = min_argc;
-	result->max_argc = max_argc;
-	result->is_direct = is_direct;
-
-	return result;
-}
-
-const gchar* kh_func_get_name(KhFunc *func) {
-	return func->name;
 }

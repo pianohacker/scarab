@@ -19,6 +19,7 @@ typedef enum {
 	KH_CELL,
 	KH_SYMBOL,
 	KH_FUNC,
+	KH_THING,
 } KhValueType;
 
 // This is here for the KhValue declaration below, and cannot be filled in until eval.h
@@ -47,6 +48,7 @@ KhValue* kh_new_string_take(char *val);
 KhValue* kh_new_cell(KhValue *left, KhValue *right);
 KhValue* kh_new_symbol(const char *val);
 KhValue* kh_new_func(KhFunc *val);
+KhValue* kh_new_thing();
 
 char* kh_inspect(KhValue *value);
 
