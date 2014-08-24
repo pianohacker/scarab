@@ -184,7 +184,7 @@ static KhValue* _get_prototype(KhContext *ctx, KhValue *value) {
 			default: break;
 		}
 
-		if (global_name) return kh_scope_lookup(ctx->global_scope, global_name);
+		if (global_name) return kh_scope_lookup(ctx->global_scope, (gchar*) g_intern_string(global_name));
 	}
 
 	return result;

@@ -1,5 +1,6 @@
 #include <glib.h>
 #include <limits.h>
+#include <string.h>
 
 #include "eval.h"
 #include "list.h"
@@ -28,6 +29,23 @@ static KhValue* _add(KhContext *ctx, long argc, KhValue **argv) {
 	}
 
 	return kh_new_int(result);
+}
+
+static KhValue* _get_field(KhContext *ctx, long argc, KhValue **argv);
+static KhValue* _call_field(KhContext *ctx, long argc, KhValue **argv) {
+	KhValue *head = _get_field(ctx, argc, argv);
+	_REQUIRE(head);
+
+	// Create the new set of arguments: (object field param1 ...) -> (object param1 ...)
+	long apply_argc = argc - 1;
+	KhValue *apply_argv[apply_argc];
+
+	apply_argv[0] = argv[0]; // Copy over the object
+	memcpy(apply_argv + 1, argv + 2, sizeof(KhValue*) * (apply_argc - 1)); // Copy over the arguments
+
+	if (!KH_IS_FUNC(head)) KH_FAIL(not-func, "Tried to evaluate %s as a function", kh_inspect(head));
+
+	return kh_apply(ctx, head->d_func, apply_argc, apply_argv);
 }
 
 static KhValue* _create_func(KhContext *ctx, const gchar *name, KhValue *arg_desc, KhValue *form, bool is_direct) {
@@ -103,6 +121,7 @@ void _register_builtins(KhScope *_builtins_scope) {
 	_REG_VARARGS(+, _add, 1, LONG_MAX, false);
 	_REG(., _get_field, 2, true);
 	_REG(=, _set, 2, true);
+	_REG_VARARGS(@, _call_field, 2, LONG_MAX, true);
 	_REG(def, _def, 3, true);
 	_REG(def-direct, _def_direct, 3, true);
 	_REG(eval, _eval, 1, false);
@@ -114,13 +133,22 @@ void _register_builtins(KhScope *_builtins_scope) {
 }
 
 #define _START_THING(name) thing = kh_new_thing(); kh_scope_add(kh_context_get_scope(ctx), #name, thing)
-#define _THING_REG_VARARGS(name, func, min_argc, max_argc, is_direct) kh(_builtins_scope, #name, kh_new_func(kh_func_new_c(#name, func, min_argc, max_argc, is_direct)));
+#define _THING_REG_VARARGS(name, func, min_argc, max_argc, is_direct) kh_set_field(ctx, thing, #name, kh_new_func(kh_func_new_c(#name, func, min_argc, max_argc, is_direct)));
 #define _THING_REG(name, func, argc, is_direct) _THING_REG_VARARGS(name, func, argc, argc, is_direct)
+
+#define _REQUIRE_SELF_IS(t) if (!KH_IS(argv[0], t)) KH_FAIL(bad-self, "Method must be called on %s, not %s", kh_value_type_name(t), kh_value_type_name(argv[0]->type))
+
+static KhValue* _int_to_string(KhContext *ctx, long argc, KhValue **argv) {
+	_REQUIRE_SELF_IS(KH_INT);
+	return kh_new_string_take(g_strdup_printf("%ld", argv[0]->d_int));
+}
 
 void _register_globals(KhContext *ctx) {
 	KhValue *thing;
 
 	_START_THING(int);
+	_THING_REG(to-string, _int_to_string, 1, false);
+
 	_START_THING(string);
 	_START_THING(cell);
 	_START_THING(symbol);

@@ -4,6 +4,20 @@
 #include "eval.h"
 #include "value.h"
 
+static char *_value_type_names[] = {
+	"nil",
+	"int",
+	"string",
+	"cell",
+	"symbol",
+	"func",
+	"thing",
+};
+
+const char *kh_value_type_name(KhValueType type) {
+	return _value_type_names[type];
+}
+
 KhValue* kh_nil = NULL;
 
 KhValue* kh_new(KhValueType type) {

@@ -22,6 +22,8 @@ typedef enum {
 	KH_THING,
 } KhValueType;
 
+const char *kh_value_type_name(KhValueType type);
+
 // This is here for the KhValue declaration below, and cannot be filled in until eval.h
 typedef struct _KhFunc KhFunc;
 
