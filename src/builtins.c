@@ -143,6 +143,21 @@ static KhValue* _int_to_string(KhContext *ctx, long argc, KhValue **argv) {
 	return kh_new_string_take(g_strdup_printf("%ld", argv[0]->d_int));
 }
 
+static KhValue* _string_to_string(KhContext *ctx, long argc, KhValue **argv) {
+	_REQUIRE_SELF_IS(KH_STRING);
+	return argv[0];
+}
+
+static KhValue* _string_to_symbol(KhContext *ctx, long argc, KhValue **argv) {
+	_REQUIRE_SELF_IS(KH_STRING);
+	return kh_new_symbol(argv[0]->d_str);
+}
+
+static KhValue* _symbol_to_string(KhContext *ctx, long argc, KhValue **argv) {
+	_REQUIRE_SELF_IS(KH_SYMBOL);
+	return kh_new_string(argv[0]->d_str);
+}
+
 void _register_globals(KhContext *ctx) {
 	KhValue *thing;
 
@@ -150,7 +165,13 @@ void _register_globals(KhContext *ctx) {
 	_THING_REG(to-string, _int_to_string, 1, false);
 
 	_START_THING(string);
+	_THING_REG(to-string, _string_to_string, 1, false);
+	_THING_REG(to-symbol, _string_to_symbol, 1, false);
+
 	_START_THING(cell);
+
 	_START_THING(symbol);
+	_THING_REG(to-string, _symbol_to_string, 1, false);
+
 	_START_THING(func);
 }
