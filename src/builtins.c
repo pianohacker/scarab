@@ -20,8 +20,16 @@ static long _parse_arg_desc(KhValue *arg_desc, char ***func_argnames) {
 	return argc;
 }
 
+// Creates a function value.
+static KhValue* _create_func(KhContext *ctx, const gchar *name, KhValue *arg_desc, KhValue *form, bool is_direct) {
+	char **func_argnames;
+	long func_argc = _parse_arg_desc(arg_desc, &func_argnames);
+
+	return kh_new_func(kh_func_new(name, form, func_argc, func_argc, func_argnames, kh_context_get_scope(ctx), is_direct));
+}
+
 // Builtin definitions
-static KhValue* _add(KhContext *ctx, long argc, KhValue **argv) {
+static KhValue* add(KhContext *ctx, long argc, KhValue **argv) {
 	int result = 0;
 
 	for (int i = 0; i < argc; i++) {
@@ -31,51 +39,34 @@ static KhValue* _add(KhContext *ctx, long argc, KhValue **argv) {
 	return kh_new_int(result);
 }
 
-static KhValue* _get_field(KhContext *ctx, long argc, KhValue **argv);
-static KhValue* _call_field(KhContext *ctx, long argc, KhValue **argv) {
-	KhValue *head = _get_field(ctx, argc, argv);
-	_REQUIRE(head);
+static KhValue* call_field(KhContext *ctx, long argc, KhValue **argv) {
+	KhValue *value = kh_eval(ctx, argv[0]);
+	_REQUIRE(value);
 
-	// Create the new set of arguments: (object field param1 ...) -> (object param1 ...)
-	long apply_argc = argc - 1;
-	KhValue *apply_argv[apply_argc];
-
-	apply_argv[0] = argv[0]; // Copy over the object
-	memcpy(apply_argv + 1, argv + 2, sizeof(KhValue*) * (apply_argc - 1)); // Copy over the arguments
-
-	if (!KH_IS_FUNC(head)) KH_FAIL(not-func, "Tried to evaluate %s as a function", kh_inspect(head));
-
-	return kh_apply(ctx, head->d_func, apply_argc, apply_argv);
+	return kh_call_field(ctx, value, argv[1]->d_str, argc - 2, argv + 2);
 }
 
-static KhValue* _create_func(KhContext *ctx, const gchar *name, KhValue *arg_desc, KhValue *form, bool is_direct) {
-	char **func_argnames;
-	long func_argc = _parse_arg_desc(arg_desc, &func_argnames);
-
-	return kh_new_func(kh_func_new(name, form, func_argc, func_argc, func_argnames, kh_context_get_scope(ctx), is_direct));
-}
-
-static KhValue* _eval(KhContext *ctx, long argc, KhValue **argv) {
+static KhValue* eval(KhContext *ctx, long argc, KhValue **argv) {
 	return kh_eval(ctx, argv[0]);
 }
 
-static KhValue* _def(KhContext *ctx, long argc, KhValue **argv) {
+static KhValue* def(KhContext *ctx, long argc, KhValue **argv) {
 	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, _create_func(ctx, argv[0]->d_str, argv[1], argv[2], false));
 
 	return kh_nil;
 }
 
-static KhValue* _def_direct(KhContext *ctx, long argc, KhValue **argv) {
+static KhValue* def_direct(KhContext *ctx, long argc, KhValue **argv) {
 	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, _create_func(ctx, argv[0]->d_str, argv[1], argv[2], true));
 
 	return kh_nil;
 }
 
-static KhValue* _inspect(KhContext *ctx, long argc, KhValue **argv) {
+static KhValue* inspect(KhContext *ctx, long argc, KhValue **argv) {
 	return kh_new_string_take(kh_inspect(argv[0]));
 }
 
-static KhValue* _get_field(KhContext *ctx, long argc, KhValue **argv) {
+static KhValue* get_field(KhContext *ctx, long argc, KhValue **argv) {
 	KhValue *value = kh_eval(ctx, argv[0]);
 	_REQUIRE(value);
 	KhValue *result = kh_get_field(ctx, value, argv[1]->d_str);
@@ -85,11 +76,11 @@ static KhValue* _get_field(KhContext *ctx, long argc, KhValue **argv) {
 	return result;
 }
 
-static KhValue* _lambda(KhContext *ctx, long argc, KhValue **argv) {
+static KhValue* lambda(KhContext *ctx, long argc, KhValue **argv) {
 	return _create_func(ctx, "*lambda*", argv[0], argv[1], false);
 }
 
-static KhValue* _let(KhContext *ctx, long argc, KhValue **argv) {
+static KhValue* let(KhContext *ctx, long argc, KhValue **argv) {
 	KhScope *let_scope = kh_context_new_scope(ctx);
 
 	KH_ITERATE(argv[0]) {
@@ -104,13 +95,13 @@ static KhValue* _let(KhContext *ctx, long argc, KhValue **argv) {
 	return result;
 }
 
-static KhValue* _set(KhContext *ctx, long argc, KhValue **argv) {
+static KhValue* set(KhContext *ctx, long argc, KhValue **argv) {
 	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, argv[1]);
 
 	return kh_nil;
 }
 
-static KhValue* _quote(KhContext *ctx, long argc, KhValue **argv) {
+static KhValue* quote(KhContext *ctx, long argc, KhValue **argv) {
 	return argv[0];
 }
 
@@ -118,18 +109,18 @@ static KhValue* _quote(KhContext *ctx, long argc, KhValue **argv) {
 #define _REG(name, func, argc, is_direct) _REG_VARARGS(name, func, argc, argc, is_direct)
 
 void _register_builtins(KhScope *_builtins_scope) {
-	_REG_VARARGS(+, _add, 1, LONG_MAX, false);
-	_REG(., _get_field, 2, true);
-	_REG(=, _set, 2, true);
-	_REG_VARARGS(@, _call_field, 2, LONG_MAX, true);
-	_REG(def, _def, 3, true);
-	_REG(def-direct, _def_direct, 3, true);
-	_REG(eval, _eval, 1, false);
-	_REG(inspect, _inspect, 1, false);
-	_REG(inspect-direct, _inspect, 1, true);
-	_REG(lambda, _lambda, 2, true);
-	_REG(let, _let, 2, true);
-	_REG(quote, _quote, 1, true);
+	_REG_VARARGS(+, add, 1, LONG_MAX, false);
+	_REG(., get_field, 2, true);
+	_REG(=, set, 2, true);
+	_REG_VARARGS(@, call_field, 2, LONG_MAX, true);
+	_REG(def, def, 3, true);
+	_REG(def-direct, def_direct, 3, true);
+	_REG(eval, eval, 1, false);
+	_REG(inspect, inspect, 1, false);
+	_REG(inspect-direct, inspect, 1, true);
+	_REG(lambda, lambda, 2, true);
+	_REG(let, let, 2, true);
+	_REG(quote, quote, 1, true);
 }
 
 #define _START_THING(name) thing = kh_new_thing(); kh_scope_add(kh_context_get_scope(ctx), #name, thing)
@@ -138,22 +129,22 @@ void _register_builtins(KhScope *_builtins_scope) {
 
 #define _REQUIRE_SELF_IS(t) if (!KH_IS(argv[0], t)) KH_FAIL(bad-self, "Method must be called on %s, not %s", kh_value_type_name(t), kh_value_type_name(argv[0]->type))
 
-static KhValue* _int_to_string(KhContext *ctx, long argc, KhValue **argv) {
+static KhValue* int_to_string(KhContext *ctx, long argc, KhValue **argv) {
 	_REQUIRE_SELF_IS(KH_INT);
 	return kh_new_string_take(g_strdup_printf("%ld", argv[0]->d_int));
 }
 
-static KhValue* _string_to_string(KhContext *ctx, long argc, KhValue **argv) {
+static KhValue* string_to_string(KhContext *ctx, long argc, KhValue **argv) {
 	_REQUIRE_SELF_IS(KH_STRING);
 	return argv[0];
 }
 
-static KhValue* _string_to_symbol(KhContext *ctx, long argc, KhValue **argv) {
+static KhValue* string_to_symbol(KhContext *ctx, long argc, KhValue **argv) {
 	_REQUIRE_SELF_IS(KH_STRING);
 	return kh_new_symbol(argv[0]->d_str);
 }
 
-static KhValue* _symbol_to_string(KhContext *ctx, long argc, KhValue **argv) {
+static KhValue* symbol_to_string(KhContext *ctx, long argc, KhValue **argv) {
 	_REQUIRE_SELF_IS(KH_SYMBOL);
 	return kh_new_string(argv[0]->d_str);
 }
@@ -162,16 +153,16 @@ void _register_globals(KhContext *ctx) {
 	KhValue *thing;
 
 	_START_THING(int);
-	_THING_REG(to-string, _int_to_string, 1, false);
+	_THING_REG(to-string, int_to_string, 1, false);
 
 	_START_THING(string);
-	_THING_REG(to-string, _string_to_string, 1, false);
-	_THING_REG(to-symbol, _string_to_symbol, 1, false);
+	_THING_REG(to-string, string_to_string, 1, false);
+	_THING_REG(to-symbol, string_to_symbol, 1, false);
 
 	_START_THING(cell);
 
 	_START_THING(symbol);
-	_THING_REG(to-string, _symbol_to_string, 1, false);
+	_THING_REG(to-string, symbol_to_string, 1, false);
 
 	_START_THING(func);
 }

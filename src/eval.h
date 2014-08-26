@@ -34,5 +34,8 @@ bool kh_set_field(KhContext *ctx, KhValue *value, const gchar *name, KhValue *co
 
 KhValue* kh_eval(KhContext *ctx, KhValue *form);
 KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv);
+KhValue* kh_apply_values(KhContext *ctx, KhFunc *func, ...);
+KhValue* kh_call_field(KhContext *ctx, KhValue *self, char *method, long argc, KhValue **argv);
+KhValue* kh_call_field_values(KhContext *ctx, KhValue *self, char *method, ...);
 
 #endif

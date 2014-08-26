@@ -241,6 +241,8 @@ KhValue* kh_eval(KhContext *ctx, KhValue *form) {
 			if (value == NULL) KH_FAIL(undefined-variable, "%s", form->d_str);
 
 			return value;
+		case KH_QUOTED:
+			return form->d_quoted;
 		case KH_CELL:
 			break;
 	}
@@ -302,4 +304,18 @@ KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv) {
 
 		return result;
 	}
+}
+
+KhValue* kh_call_field(KhContext *ctx, KhValue *self, char *method, long argc, KhValue **argv) {
+	KhValue *head = kh_get_field(ctx, self, method);
+	if (!head) KH_FAIL(bad-field, "no such method %s", method);
+	if (!KH_IS_FUNC(head)) KH_FAIL(not-func, "Tried to evaluate %s as a function", kh_inspect(head));
+
+	long apply_argc = argc + 1;
+	KhValue *apply_argv[apply_argc];
+
+	apply_argv[0] = kh_new_quoted(self); // Copy over the object
+	memcpy(apply_argv + 1, argv, sizeof(KhValue*) * (apply_argc - 1)); // Copy over the arguments
+
+	return kh_apply(ctx, head->d_func, apply_argc, apply_argv);
 }

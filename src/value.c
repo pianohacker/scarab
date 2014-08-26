@@ -69,6 +69,13 @@ KhValue* kh_new_func(KhFunc *val) {
 	return value;
 }
 
+KhValue* kh_new_quoted(KhValue *val) {
+	KhValue *value = kh_new(KH_QUOTED);
+	value->d_quoted = val;
+
+	return value;
+}
+
 KhValue* kh_new_thing() {
 	return kh_new(KH_THING);
 }
@@ -132,6 +139,11 @@ static void _inspect(KhValue *value, GString *result) {
 			break;
 		case KH_THING:
 			g_string_append(result, "*thing*");
+			break;
+		case KH_QUOTED:
+			g_string_append(result, "(quote ");
+			_inspect(value->d_quoted, result);
+			g_string_append_c(result, ')');
 			break;
 	}
 }

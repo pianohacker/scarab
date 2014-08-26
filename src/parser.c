@@ -380,7 +380,7 @@ static KhValue* _parse_value(KhParserContext *self, GError **err) {
 	}
 
 	if (quote_value && new_value) {
-		return kh_new_cell(kh_new_symbol("quote"), kh_new_cell(new_value, kh_nil));
+		return kh_new_quoted(new_value);
 	}
 
 	return new_value;
