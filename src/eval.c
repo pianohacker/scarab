@@ -1,5 +1,6 @@
 #include <glib.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <string.h>
 
@@ -318,4 +319,29 @@ KhValue* kh_call_field(KhContext *ctx, KhValue *self, char *method, long argc, K
 	memcpy(apply_argv + 1, argv, sizeof(KhValue*) * (apply_argc - 1)); // Copy over the arguments
 
 	return kh_apply(ctx, head->d_func, apply_argc, apply_argv);
+}
+
+KhValue* kh_call_field_values(KhContext *ctx, KhValue *self, char *method, ...) {
+	long argc = 0;
+
+	// We have to know the number of arguments in advance to allocate stack storage, so we have to
+	// pre-scan the varargs list.
+	va_list args;
+	va_start(args, method);
+
+	while (va_arg(args, KhValue*)) argc++;
+
+	va_end(args);
+
+	KhValue *argv[argc];
+
+	if (argc) {
+		va_start(args, method);
+
+		for (long i = 0; i < argc; i++) argv[i] = va_arg(args, KhValue*);
+
+		va_end(args);
+	}
+
+	return kh_call_field(ctx, self, method, argc, argv);
 }

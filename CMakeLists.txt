@@ -5,7 +5,8 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(PKG glib-2.0)
 set(CMAKE_C_FLAGS "-Werror=implicit-function-declaration -std=gnu99 -Wall")
 set(CMAKE_C_FLAGS_DEBUG "-ggdb3 -fsanitize=address")
-set(CMAKE_C_FLAGS_PROFILE "${CMAKE_C_FLAGS_DEBUG} -pg")
+# ASAN is confused by Valgrind
+set(CMAKE_C_FLAGS_PROFILE "${CMAKE_C_FLAGS_DEBUG} -fno-sanitize=address -pg")
 
 add_executable(scarab
 	src/builtins.c

@@ -1,5 +1,6 @@
 #include <glib.h>
 #include <limits.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "eval.h"
@@ -95,6 +96,18 @@ static KhValue* let(KhContext *ctx, long argc, KhValue **argv) {
 	return result;
 }
 
+static KhValue* print(KhContext *ctx, long argc, KhValue **argv) {
+	for (long i = 0; i < argc; i++) {
+		KhValue *str = kh_call_field_values(ctx, argv[i], "to-string", NULL);
+		fputs(str->d_str, stdout);
+		if (i != argc - 1) putchar(' ');
+	}
+
+	putchar('\n');
+
+	return kh_nil;
+}
+
 static KhValue* set(KhContext *ctx, long argc, KhValue **argv) {
 	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, argv[1]);
 
@@ -120,6 +133,7 @@ void _register_builtins(KhScope *_builtins_scope) {
 	_REG(inspect-direct, inspect, 1, true);
 	_REG(lambda, lambda, 2, true);
 	_REG(let, let, 2, true);
+	_REG_VARARGS(print, print, 0, LONG_MAX, false);
 	_REG(quote, quote, 1, true);
 }
 

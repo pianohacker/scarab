@@ -10,7 +10,8 @@ int main(int argc, char **argv) {
 	KhContext *ctx = kh_context_new();
 
 	while (true) {
-		char buffer[1024];
+		// Memory is free, laziness is rewarding
+		char buffer[65536];
 		printf("> ");
 
 		if (!fgets(buffer, sizeof(buffer), stdin)) break;
@@ -30,13 +31,13 @@ int main(int argc, char **argv) {
 
 		int i = 1;
 		KH_ITERATE(forms) {
-			KhValue *value = kh_eval(ctx, forms->d_left);
+			KhValue *value = kh_eval(ctx, elem->d_left);
 
 			if (value == NULL) {
 				printf("Error: %s\n", kh_inspect(kh_get_error(ctx)));
 			} else {
 				if (print_number) printf("%d. ", i++);
-				puts(kh_inspect(value));
+				if (print_number || value != kh_nil) puts(kh_inspect(value));
 			}
 		}
 	}
