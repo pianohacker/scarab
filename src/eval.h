@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 
+#include "strfuncs.h"
 #include "value.h"
 
 typedef struct _KhContext KhContext;
@@ -18,7 +19,7 @@ KhScope* kh_context_new_scope(KhContext *ctx);
 KhScope* kh_context_push_scope(KhContext *ctx);
 KhScope* kh_context_pop_scope(KhContext *ctx);
 
-#define KH_ERROR(type, msg, ...) kh_set_error(ctx, kh_new_cell(kh_new_symbol(#type), kh_new_cell(kh_new_string_take(g_strdup_printf(msg, ##__VA_ARGS__)), kh_nil)))
+#define KH_ERROR(type, msg, ...) kh_set_error(ctx, kh_new_cell(kh_new_symbol(#type), kh_new_cell(kh_new_string_take(kh_strdupf(msg, ##__VA_ARGS__)), kh_nil)))
 #define KH_FAIL(type, msg, ...) { KH_ERROR(type, msg, __VA_ARGS__); return NULL; }
 
 void kh_set_error(KhContext *ctx, KhValue *error);

@@ -24,6 +24,7 @@
 #include <unistd.h>
 
 #include "error.h"
+#include "strfuncs.h"
 #include "tokenizer.h"
 
 //> Macros
@@ -514,7 +515,7 @@ bool kh_tokenizer_next(KhTokenizer *self, KhToken **result, GError **err) {
 		_set_error(err,
 			self,
 			KH_SYNTAX_ERROR_UNEXPECTED_CHAR,
-		   	g_strdup_printf("Invalid character '%s'(%d)", g_ucs4_to_utf8(&c, 1, NULL, NULL, NULL), c)
+		   	kh_strdupf("Invalid character '%s'(%d)", g_ucs4_to_utf8(&c, 1, NULL, NULL, NULL), c)
 		);
 		return false;
 	}

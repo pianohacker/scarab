@@ -145,7 +145,7 @@ void _register_builtins(KhScope *_builtins_scope) {
 
 static KhValue* int_to_string(KhContext *ctx, long argc, KhValue **argv) {
 	_REQUIRE_SELF_IS(KH_INT);
-	return kh_new_string_take(g_strdup_printf("%ld", argv[0]->d_int));
+	return kh_new_string_take(kh_strdupf("%ld", argv[0]->d_int));
 }
 
 static KhValue* string_to_string(KhContext *ctx, long argc, KhValue **argv) {

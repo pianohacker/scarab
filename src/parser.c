@@ -26,6 +26,7 @@
 #include "error.h"
 #include "list.h"
 #include "parser.h"
+#include "strfuncs.h"
 #include "tokenizer.h"
 
 typedef struct {
@@ -216,7 +217,7 @@ static KhValue* _parse_operator_list(KhParserContext *self, KhTokenType terminat
 				self,
 				token,
 				KH_SYNTAX_ERROR_MALFORMED,
-				g_strdup_printf("Unexpected %s, expected a value", kh_token_type_name(token->type)),
+				kh_strdupf("Unexpected %s, expected a value", kh_token_type_name(token->type)),
 				err);
 
 			return NULL;
@@ -242,7 +243,7 @@ static KhValue* _parse_operator_list(KhParserContext *self, KhTokenType terminat
 					self,
 					token,
 					KH_SYNTAX_ERROR_MALFORMED,
-					g_strdup_printf("Non-matching operator %s in operator list", token->val),
+					kh_strdupf("Non-matching operator %s in operator list", token->val),
 					err);
 				return NULL;
 			}
@@ -338,7 +339,7 @@ static KhValue* _parse_value(KhParserContext *self, GError **err) {
 			self,
 			token,
 			KH_SYNTAX_ERROR_MALFORMED,
-			g_strdup_printf("Unexpected %s, expected a value", kh_token_type_name(token->type)),
+			kh_strdupf("Unexpected %s, expected a value", kh_token_type_name(token->type)),
 			err);
 
 		return NULL;

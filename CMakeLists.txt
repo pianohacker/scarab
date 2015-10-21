@@ -13,9 +13,10 @@ add_executable(scarab
 	src/error.c
 	src/list.c
 	src/parser.c
+	src/strfuncs.c
 	src/tokenizer.c
 	src/value.c
 	src/main.c
 )
 include_directories(${PKG_INCLUDE_DIRS})
-target_link_libraries(scarab m ${PKG_LDFLAGS})
+target_link_libraries(scarab gc m ${PKG_LDFLAGS})
