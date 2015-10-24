@@ -49,7 +49,7 @@ typedef enum {
  * @line: The line where the token occurred.
  * @col: The column where the token occurred.
  * @val: Any string contents of the token, as a %NULL-terminated string. This is undefined for any
- *       single-character token, and %T_EOF and %T_NULL.
+ *       single-character token, %T_EOF and %T_NULL.
  */
 typedef struct {
 	KhTokenType type;
@@ -72,6 +72,5 @@ extern char* kh_tokenizer_get_filename(KhTokenizer *self);
 extern void kh_tokenizer_free(KhTokenizer *self);
 
 extern char* kh_token_type_name(KhTokenType token_type);
-extern void kh_token_free(KhToken *token);
 
 #endif

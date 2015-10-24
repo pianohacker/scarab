@@ -84,7 +84,6 @@ static void _error(KhParserContext *self, KhToken *token, KhSyntaxError err_type
 		token->line,
 		token->col
 	);
-	kh_token_free(token);
 }
 
 static bool _expect(KhParserContext *self, KhToken *token, GError **err, ...) {
@@ -161,8 +160,6 @@ static KhValue* _parse_number(KhParserContext *self, GError **err) {
 
 	KhValue *result = kh_new_int(value);
 
-	kh_token_free(token);
-
 	return result;
 }
 
@@ -171,8 +168,6 @@ static KhValue* _parse_string(KhParserContext *self, GError **err) {
 	REQUIRE(_read(self, &token, err));
 
 	KhValue *result = kh_new_string(token->val);
-
-	kh_token_free(token);
 
 	return result;
 }
@@ -188,8 +183,6 @@ static KhValue* _parse_identifier(KhParserContext *self, GError **err) {
 	} else {
 		result = kh_new_symbol(token->val);
 	}
-
-	kh_token_free(token);
 
 	return result;
 }
@@ -247,8 +240,6 @@ static KhValue* _parse_operator_list(KhParserContext *self, KhTokenType terminat
 					err);
 				return NULL;
 			}
-
-			kh_token_free(token);
 		} else {
 			operator = _parse_value(self, err);
 
@@ -311,7 +302,6 @@ static KhValue* _parse_open_list(KhParserContext *self, KhTokenType terminator, 
 			break;
 		} else {
 			_consume(self);
-			kh_token_free(token);
 		}
 	}
 
@@ -328,7 +318,6 @@ static KhValue* _parse_value(KhParserContext *self, GError **err) {
 
 	if (token->type == '\'') {
 		_consume(self);
-		kh_token_free(token);
 		quote_value = true;
 
 		REQUIRE(_peek(self, &token, err));
@@ -365,12 +354,9 @@ static KhValue* _parse_value(KhParserContext *self, GError **err) {
 			default: g_warn_if_reached();
 		}
 
-		kh_token_free(token);
-
 		if (new_value) {
 			REQUIRE(_read(self, &token, err));
 			EXPECT(terminator);
-			kh_token_free(token);
 		}
 	} else if (token->type == T_NUMBER) {
 		new_value = _parse_number(self, err);
@@ -394,7 +380,6 @@ static KhValue* _parse(KhParserContext *self, GError **err) {
 		KhToken *token;
 		REQUIRE(_read(self, &token, err));
 		EXPECT(T_EOF);
-		kh_token_free(token);
 	}
 
 	return result;

@@ -17,6 +17,7 @@
  */
 
 #include <ctype.h>
+#include <gc.h>
 #include <glib.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,7 +30,7 @@
 
 //> Macros
 #define FAIL_IF_ERR() if ((err != NULL) && (*err != NULL)) return false;
-#define GROW_IF_NEEDED(str, i, alloc) if (i >= alloc) { alloc = alloc * 2 + 1; str = g_realloc(str, alloc); }
+#define GROW_IF_NEEDED(str, i, alloc) if (i >= alloc) { alloc = alloc * 2 + 1; str = GC_REALLOC(str, alloc); }
 #define REQUIRE(expr) if (!expr) return false;
 
 #define _SPECIAL_PUNCT ",'{}()[]"
@@ -68,8 +69,8 @@ static char *TOKEN_NAMES[15] = {
  * Returns: A new %KhTokenizer, or NULL on failure.
  */
 KhTokenizer* kh_tokenizer_new(const char *filename, GError **err) {
-	KhTokenizer* self = g_slice_new0(KhTokenizer);
-	self->filename = g_strdup(filename);
+	KhTokenizer* self = GC_NEW(KhTokenizer);
+	self->filename = GC_STRDUP(filename);
 	self->channel = g_io_channel_new_file(filename, "r", err);
 
 	if (!self->channel) return NULL;
@@ -92,7 +93,7 @@ KhTokenizer* kh_tokenizer_new(const char *filename, GError **err) {
  * Returns: A new %KhTokenizer, or NULL on failure.
  */
 KhTokenizer* kh_tokenizer_new_from_string(const char *str, GError **err) {
-	KhTokenizer* self = g_slice_new0(KhTokenizer);
+	KhTokenizer* self = GC_NEW(KhTokenizer);
 	self->filename = "<string>";
 	self->stringbuf = g_utf8_to_ucs4(str, -1, NULL, NULL, err);
 
@@ -123,8 +124,6 @@ char* kh_tokenizer_get_filename(KhTokenizer *self) {
  * Frees this %KhTokenizer and all resources associated with it.
  */
 void kh_tokenizer_free(KhTokenizer *self) {
-	g_free(self->filename);
-
 	if (self->channel) {
 		g_io_channel_shutdown(self->channel, FALSE, NULL);
 		g_io_channel_unref(self->channel);
@@ -151,18 +150,6 @@ extern char* kh_token_type_name(KhTokenType token_type) {
 	} else {
 		return TOKEN_NAMES[token_type == EOF ? 0 : (token_type - 255)];
 	}
-}
-
-/**
- * kh_token_free:
- * @token: A valid %KhToken.
- *
- * Should be called to free a token and its contents once the parser is done with it.
- */
-extern void kh_token_free(KhToken *token) {
-	if (token->val) g_free(token->val);
-
-	g_slice_free(KhToken, token);
 }
 
 //> Internal Functions
@@ -289,7 +276,7 @@ static void _consume(KhTokenizer *self) {
  * Returns: A newly-allocated %KhToken with the given information.
  */
 static KhToken* _maketoken(KhTokenType type, int line, int col) {
-	KhToken *result = g_slice_new0(KhToken);
+	KhToken *result = GC_NEW(KhToken);
 
 	result->type = type;
 	result->line = line;
@@ -299,7 +286,7 @@ static KhToken* _maketoken(KhTokenType type, int line, int col) {
 }
 
 /*
- * _maketoken:
+ * _set_error:
  * @err: (out) (allow-none): Output location of the %GError passed to the calling function.
  * @self: A valid %KhTokenizer.
  * @err_type: Kind of %KhSyntaxError to set.
@@ -323,7 +310,7 @@ static void _set_error(GError **err, KhTokenizer *self, KhSyntaxError err_type, 
 //> Sub-tokenizers
 static bool _tokenize_number(KhTokenizer *self, KhToken *result, gunichar c, GError **err) {
 	int length = 7;
-	char *output = result->val = g_malloc(length);
+	char *output = result->val = GC_MALLOC_ATOMIC(length);
 
 	output[0] = c;
 	int i = 1;
@@ -357,7 +344,7 @@ static bool _tokenize_number(KhTokenizer *self, KhToken *result, gunichar c, GEr
 
 static bool _tokenize_identifier(KhTokenizer *self, KhToken *result, gunichar c, GError **err) {
 	int length = 7;
-	char *output = result->val = g_malloc(length);
+	char *output = result->val = GC_MALLOC_ATOMIC(length);
 
 	int i = g_unichar_to_utf8(c, output);
 
@@ -377,7 +364,7 @@ static bool _tokenize_identifier(KhTokenizer *self, KhToken *result, gunichar c,
 static bool _tokenize_string(KhTokenizer *self, KhToken *result, GError **err) {
 	int length = 7;
 	gunichar c;
-	char *output = result->val = g_malloc(length);
+	char *output = result->val = GC_MALLOC_ATOMIC(length);
 	int i = 0;
 
 	while (_peek(self, &c, err) && c != '"' && c != EOF) {
@@ -418,7 +405,7 @@ static bool _tokenize_string(KhTokenizer *self, KhToken *result, GError **err) {
 static bool _tokenize_backquote_string(KhTokenizer *self, KhToken *result, GError **err) {
 	int length = 7;
 	gunichar c;
-	char *output = result->val = g_malloc(length);
+	char *output = result->val = GC_MALLOC_ATOMIC(length);
 	int i = 0;
 
 	while (_peek(self, &c, err) && c != '`' && c != EOF) {

@@ -27,7 +27,7 @@ char* kh_vstrdupf(const char *format, va_list args) {
 	size_t size = vsnprintf(NULL, 0, format, args) + 1;
 
 	// Then allocate the result, actually do the sprintf and return.
-	char *result = GC_malloc(size);
+	char *result = GC_MALLOC_ATOMIC(size);
 	vsnprintf(result, size, format, args2);
 	va_end(args2);
 
