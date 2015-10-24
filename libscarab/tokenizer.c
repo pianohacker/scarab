@@ -130,8 +130,6 @@ void kh_tokenizer_free(KhTokenizer *self) {
 	}
 
 	if (self->stringbuf) g_free(self->stringbuf);
-
-	g_slice_free(KhTokenizer, self);
 }
 
 /**
