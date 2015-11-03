@@ -39,7 +39,8 @@
 struct _KhTokenizer {
 	char *filename;
 	GIOChannel *channel;
-	gunichar *stringbuf;
+	const char *str_base;
+	const char *str;
 	
 	int line;
 	int col;
@@ -57,6 +58,13 @@ static char *TOKEN_NAMES[15] = {
 	"string",
 };
 
+void _tokenizer_finalize(KhTokenizer *self, void *data) {
+	if (self->channel) {
+		g_io_channel_shutdown(self->channel, FALSE, NULL);
+		g_io_channel_unref(self->channel);
+	}
+}
+
 //> Public Functions
 
 /**
@@ -69,13 +77,14 @@ static char *TOKEN_NAMES[15] = {
  * Returns: A new %KhTokenizer, or NULL on failure.
  */
 KhTokenizer* kh_tokenizer_new(const char *filename, GError **err) {
-	KhTokenizer* self = GC_NEW(KhTokenizer);
+	KhTokenizer *self = GC_NEW(KhTokenizer);
+	GC_REGISTER_FINALIZER(self, (GC_finalization_proc) _tokenizer_finalize, NULL, NULL, NULL);
 	self->filename = GC_STRDUP(filename);
 	self->channel = g_io_channel_new_file(filename, "r", err);
 
 	if (!self->channel) return NULL;
 
-	self->stringbuf = NULL;
+	self->str_base = self->str = NULL;
 	self->line = 1;
 	self->col = 1;
 	self->peek_avail = false;
@@ -93,11 +102,20 @@ KhTokenizer* kh_tokenizer_new(const char *filename, GError **err) {
  * Returns: A new %KhTokenizer, or NULL on failure.
  */
 KhTokenizer* kh_tokenizer_new_from_string(const char *str, GError **err) {
-	KhTokenizer* self = GC_NEW(KhTokenizer);
+	KhTokenizer *self = GC_NEW(KhTokenizer);
+	GC_REGISTER_FINALIZER(self, (GC_finalization_proc) _tokenizer_finalize, NULL, NULL, NULL);
 	self->filename = "<string>";
-	self->stringbuf = g_utf8_to_ucs4(str, -1, NULL, NULL, err);
+	self->str_base = self->str = str;
 
-	if (!self->stringbuf) return NULL;
+	if (!g_utf8_validate(self->str, -1, NULL)) {
+		g_set_error(
+			err,
+			G_CONVERT_ERROR,
+			G_CONVERT_ERROR_ILLEGAL_SEQUENCE,
+			"Invalid UTF-8 sequence in string"
+		);
+		return NULL;
+	}
 
 	self->channel = NULL;
 	self->line = 1;
@@ -115,21 +133,6 @@ KhTokenizer* kh_tokenizer_new_from_string(const char *str, GError **err) {
  */
 char* kh_tokenizer_get_filename(KhTokenizer *self) {
 	return self->filename;
-}
-
-/**
- * kh_tokenizer_free:
- * @self: A valid %KhTokenizer.
- *
- * Frees this %KhTokenizer and all resources associated with it.
- */
-void kh_tokenizer_free(KhTokenizer *self) {
-	if (self->channel) {
-		g_io_channel_shutdown(self->channel, FALSE, NULL);
-		g_io_channel_unref(self->channel);
-	}
-
-	if (self->stringbuf) g_free(self->stringbuf);
 }
 
 /**
@@ -165,12 +168,13 @@ static bool _read(KhTokenizer *self, gunichar *result, GError **err) {
 	if (self->peek_avail) {
 		*result = self->peeked;
 		self->peek_avail = false;
-	} else if (self->stringbuf) {
-		if (!*self->stringbuf) {
-			self->stringbuf = NULL;
+	} else if (self->str) {
+		if (!*self->str) {
+			self->str = NULL;
 			*result = EOF;
 		} else {
-			*result = *(self->stringbuf++);
+			*result = g_utf8_get_char(self->str);
+			self->str = g_utf8_next_char(self->str);
 		}
 
 		return true;
@@ -218,11 +222,12 @@ static bool _read(KhTokenizer *self, gunichar *result, GError **err) {
  */
 static bool _peek(KhTokenizer *self, gunichar *result, GError **err) {
 	if (!self->peek_avail) {
-		if (self->stringbuf) {
-			if (*self->stringbuf) {
-				self->peeked = *(self->stringbuf++);
+		if (self->str) {
+			if (*self->str) {
+				self->peeked = g_utf8_get_char(self->str);
+				self->str = g_utf8_next_char(self->str);
 			} else {
-				self->stringbuf = NULL;
+				self->str = NULL;
 				self->peeked = EOF;
 			}
 			self->peek_avail = true;
