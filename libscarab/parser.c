@@ -17,6 +17,7 @@
  */
 
 #include <errno.h>
+#include <gc.h>
 #include <glib.h>
 #include <glib-object.h>
 #include <stdarg.h>
@@ -386,7 +387,7 @@ static KhValue* _parse(KhParserContext *self, GError **err) {
 }
 
 KhValue* kh_parse_string(const char *str, GError **err) {
-	KhParserContext *self = g_slice_new0(KhParserContext);
+	KhParserContext *self = GC_NEW(KhParserContext);
 	self->tokenizer = kh_tokenizer_new_from_string(str, err);
 
 	if (!self->tokenizer) {

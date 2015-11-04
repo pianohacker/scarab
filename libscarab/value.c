@@ -1,3 +1,4 @@
+#include <gc.h>
 #include <glib.h>
 #include <stdbool.h>
 
@@ -21,7 +22,7 @@ const char *kh_value_type_name(KhValueType type) {
 KhValue* kh_nil = NULL;
 
 KhValue* kh_new(KhValueType type) {
-	KhValue *value = g_slice_new0(KhValue);
+	KhValue *value = GC_NEW(KhValue);
 	value->type = type;
 
 	return value;
@@ -35,7 +36,7 @@ KhValue* kh_new_string_take(char *val) {
 }
 
 KhValue* kh_new_string(const char *val) {
-	return kh_new_string_take(g_strdup(val));
+	return kh_new_string_take(GC_STRDUP(val));
 }
 
 KhValue* kh_new_int(long val) {
@@ -55,8 +56,6 @@ KhValue* kh_new_cell(KhValue *left, KhValue *right) {
 
 KhValue* kh_new_symbol(const char *val) {
 	KhValue *value = kh_new(KH_SYMBOL);
-	// FIXME: at some point, we need to be able to mark strings that should not be freed when their
-	// value is garbage-collected. This won't really matter until we write a garbage collector.
 	value->d_str = (char *) g_intern_string(val);
 
 	return value;
