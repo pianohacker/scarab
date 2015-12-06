@@ -45,9 +45,9 @@ infix notation:
 This works for multiple arguments and for nested expressions:
 
 ```
-> `[a + b + c]
+> '[a + b + c]
 (+ a b c)
-> `[[a * 3] + d]
+> '[[a * 3] + d]
 (+ (* a 3) d)
 ```
 
@@ -58,7 +58,7 @@ Form lists, surrounded by curly braces, allow cleaner definition of sequences of
 statements):
 
 ```
-> ^{foo 1 2, bar 3 4}
+> '{foo 1 2, bar 3 4}
 ((foo 1 2) (bar 3 4))
 ```
 
