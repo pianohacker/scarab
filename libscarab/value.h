@@ -20,7 +20,9 @@ typedef enum {
 	KH_SYMBOL,
 	KH_FUNC,
 	KH_THING,
-	KH_QUOTED
+	KH_QUOTED,
+	KH_RECORD_TYPE,
+	KH_RECORD,
 } KhValueType;
 
 const char *kh_value_type_name(KhValueType type);
@@ -40,6 +42,8 @@ typedef struct _KhValue {
 		};
 		KhFunc *d_func;
 		struct _KhValue *d_quoted;
+		KhRecordType *d_record_type;
+		KhRecord *d_record;
 	};
 } KhValue;
 
@@ -54,6 +58,8 @@ KhValue* kh_new_symbol(const char *val);
 KhValue* kh_new_func(KhFunc *val);
 KhValue* kh_new_quoted(KhValue *val);
 KhValue* kh_new_thing();
+KhValue* kh_new_record_type(KhRecordType *type);
+KhValue* kh_new_record(KhRecord *record);
 
 char* kh_inspect(KhValue *value);
 

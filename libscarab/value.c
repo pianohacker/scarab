@@ -31,6 +31,9 @@ static char *_value_type_names[] = {
 	"symbol",
 	"func",
 	"thing",
+	"quoted",
+	"record-type",
+	"record",
 };
 
 const char *kh_value_type_name(KhValueType type) {
@@ -95,6 +98,20 @@ KhValue* kh_new_quoted(KhValue *val) {
 
 KhValue* kh_new_thing() {
 	return kh_new(KH_THING);
+}
+
+KhValue* kh_new_record_type(KhRecordType *type) {
+	KhValue *value = kh_new(KH_RECORD_TYPE);
+	value->d_record_type = type;
+
+	return value;
+}
+
+KhValue* kh_new_record(KhRecord *record) {
+	KhValue *value = kh_new(KH_RECORD);
+	value->d_record = record;
+
+	return value;
 }
 
 // For _inspect_cell
