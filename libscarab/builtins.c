@@ -1,3 +1,24 @@
+/*
+ * Copyright (C) 2015 Jesse Weaver <pianohacker@gmail.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+ */
+
+// These are Scarab's builtin functions, which form much of what would be in the interpreter in
+// other languages.
+
 #include <glib.h>
 #include <limits.h>
 #include <stdio.h>
@@ -8,8 +29,8 @@
 #include "util.h"
 #include "value.h"
 
-// Utility functions
-//
+// # Utility functions
+
 // This parses a list of argument descriptions into its component pieces.
 static long _parse_arg_desc(KhValue *arg_desc, char ***func_argnames) {
 	long argc = kh_list_length(arg_desc);
@@ -21,15 +42,20 @@ static long _parse_arg_desc(KhValue *arg_desc, char ***func_argnames) {
 	return argc;
 }
 
-// Creates a function value.
+// In order to create a function from its argument list and underlying form, we have to:
 static KhValue* _create_func(KhContext *ctx, const gchar *name, KhValue *arg_desc, KhValue *form, bool is_direct) {
 	char **func_argnames;
+	// First, parse the argument names into a more palatable form.
 	long func_argc = _parse_arg_desc(arg_desc, &func_argnames);
 
+	// Then, we have to create a function definition and a value to wrap that function.
 	return kh_new_func(kh_func_new(name, form, func_argc, func_argc, func_argnames, kh_context_get_scope(ctx), is_direct));
 }
 
-// Builtin definitions
+// # Builtin definitions
+// ## `+` - add 1 or more integers
+//
+// Takes 1 or more integer arguments and returns their sum.
 static KhValue* add(KhContext *ctx, long argc, KhValue **argv) {
 	int result = 0;
 
@@ -40,33 +66,7 @@ static KhValue* add(KhContext *ctx, long argc, KhValue **argv) {
 	return kh_new_int(result);
 }
 
-static KhValue* call_field(KhContext *ctx, long argc, KhValue **argv) {
-	KhValue *value = kh_eval(ctx, argv[0]);
-	_REQUIRE(value);
-
-	return kh_call_field(ctx, value, argv[1]->d_str, argc - 2, argv + 2);
-}
-
-static KhValue* eval(KhContext *ctx, long argc, KhValue **argv) {
-	return kh_eval(ctx, argv[0]);
-}
-
-static KhValue* def(KhContext *ctx, long argc, KhValue **argv) {
-	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, _create_func(ctx, argv[0]->d_str, argv[1], argv[2], false));
-
-	return kh_nil;
-}
-
-static KhValue* def_direct(KhContext *ctx, long argc, KhValue **argv) {
-	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, _create_func(ctx, argv[0]->d_str, argv[1], argv[2], true));
-
-	return kh_nil;
-}
-
-static KhValue* inspect(KhContext *ctx, long argc, KhValue **argv) {
-	return kh_new_string_take(kh_inspect(argv[0]));
-}
-
+// ## `.` - get fields of things
 static KhValue* get_field(KhContext *ctx, long argc, KhValue **argv) {
 	KhValue *value = kh_eval(ctx, argv[0]);
 	_REQUIRE(value);
@@ -77,10 +77,70 @@ static KhValue* get_field(KhContext *ctx, long argc, KhValue **argv) {
 	return result;
 }
 
+// ## `@` - call methods
+//
+// Given a thing, a method name, and a set of arguments, calls the given method on that thing.
+static KhValue* call_field(KhContext *ctx, long argc, KhValue **argv) {
+	KhValue *value = kh_eval(ctx, argv[0]);
+	_REQUIRE(value);
+
+	return kh_call_field(ctx, value, argv[1]->d_str, argc - 2, argv + 2);
+}
+
+// ## `def` - defines functions
+//
+// Defines a new function and adds it to the symbol table. Takes the name of the function, a list of
+// names and a list of forms that are the body of the function:
+//    
+//     def foobar (a b c) {print foo, [1 + 1]}
+//
+// Where the value of the last form in the body is the return value of the function.
+static KhValue* def(KhContext *ctx, long argc, KhValue **argv) {
+	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, _create_func(ctx, argv[0]->d_str, argv[1], argv[2], false));
+
+	return kh_nil;
+}
+
+// ## `def-direct` - defines direct functions
+//
+// As above, but defines a direct function (where the arguments to the function are not evaluated
+// before being passed).
+static KhValue* def_direct(KhContext *ctx, long argc, KhValue **argv) {
+	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, _create_func(ctx, argv[0]->d_str, argv[1], argv[2], true));
+
+	return kh_nil;
+}
+
+// ## `eval` - evaluate forms
+//
+// Evaluates the given form in the current scope.
+static KhValue* eval(KhContext *ctx, long argc, KhValue **argv) {
+	return kh_eval(ctx, argv[0]);
+}
+
+// ## `inspect` - returns a string describing a value
+//
+// This will return a string describing the contents of the given value. This may not be directly
+// parsable, as it is intended for human consumption.
+static KhValue* inspect(KhContext *ctx, long argc, KhValue **argv) {
+	return kh_new_string_take(kh_inspect(argv[0]));
+}
+
+// ## `lambda` - define an inline function
+//
+// Same as def, but returns the function value instead of adding it to the symbol table.
 static KhValue* lambda(KhContext *ctx, long argc, KhValue **argv) {
 	return _create_func(ctx, "*lambda*", argv[0], argv[1], false);
 }
 
+// ## `let` - evaluate forms with local variable values
+//
+// Takes two arguments, a list of variable definitions and a form to evaluate with those definitions
+// in play. For instance:
+//
+//     let {a 1, b 2} {[a + b]}
+//
+// will return 3.
 static KhValue* let(KhContext *ctx, long argc, KhValue **argv) {
 	KhScope *let_scope = kh_context_new_scope(ctx);
 
@@ -96,6 +156,10 @@ static KhValue* let(KhContext *ctx, long argc, KhValue **argv) {
 	return result;
 }
 
+// ## `print` - prints values to the console
+//
+// Prints all arguments to the screen (after string conversion), separated with spaces and
+// terminated with a space.
 static KhValue* print(KhContext *ctx, long argc, KhValue **argv) {
 	for (long i = 0; i < argc; i++) {
 		KhValue *str = kh_call_field_values(ctx, argv[i], "to-string", NULL);
@@ -108,14 +172,20 @@ static KhValue* print(KhContext *ctx, long argc, KhValue **argv) {
 	return kh_nil;
 }
 
+// ## `quote` - returns values unevaluated
+//
+// Returns its argument unevaluated.
+static KhValue* quote(KhContext *ctx, long argc, KhValue **argv) {
+	return argv[0];
+}
+
+// ## `set` - set values in the current scope
+//
+// Sets the symbol with the given name to the given value.
 static KhValue* set(KhContext *ctx, long argc, KhValue **argv) {
 	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, argv[1]);
 
 	return kh_nil;
-}
-
-static KhValue* quote(KhContext *ctx, long argc, KhValue **argv) {
-	return argv[0];
 }
 
 #define _REG_VARARGS(name, func, min_argc, max_argc, is_direct) kh_scope_add(_builtins_scope, #name, kh_new_func(kh_func_new_c(#name, func, min_argc, max_argc, is_direct)));

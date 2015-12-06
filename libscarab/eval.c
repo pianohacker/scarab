@@ -1,3 +1,28 @@
+/*
+ * Copyright (C) 2015 Jesse Weaver <pianohacker@gmail.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+ */
+
+// This is the core of Scarab's evaluator. It contains the scope and function structures,
+// the execution context that all code in a given environment runs within, and the s-expression
+// evaluator.
+//
+// As Scarab is a Lisp-family language, much of the behavior that would be runtime-level in other
+// languages is defined in the builtin functions. Check `builtins.c` for those.
+
 #include <glib.h>
 #include <limits.h>
 #include <stdarg.h>
@@ -9,49 +34,26 @@
 #include "util.h"
 #include "value.h"
 
-// Core context object; holds information on current execution context.
-// This will change as execution goes through various scopes and environments.
-struct _KhContext {
-	KhScope *global_scope;
-	KhScope *scope;
-	KhValue *error;
+// # Scopes
 
-	GHashTable *field_sets;
-	GHashTable *prototypes;
-};
-
-// Scope object; holds a set of values and a pointer to the parent.
-//
-// For example, a function might have a scope that links to the global scope, which itself links to
-// the builtins scope.
+// A given scope is rather simple; it only contains a link to its parent (if any) and a map of the
+// variables in it.
 struct _KhScope {
 	KhScope *parent;
 	GHashTable *table;
 };
 
-struct _KhFunc {
-	const gchar *name;
+// Note that Scarab's scoping is lexical. When a scope is created for a new function definition,
+// its parent is the defining function.
 
-	KhValue *form;
-	KhScope *scope;
-	long min_argc;
-	long max_argc;
-	char **argnames;
-
-	KhCFunc c_func;
-
-	bool is_direct;
-};
-
+// Since there is no reason to define the builtin functions multiple times, a parent for the global
+// scope is constructed once. This scope is de-facto read-only, as no code can execute in the
+// builtins scope and thus no code can change its variables.
 static KhScope *_builtins_scope = NULL;
-
 extern void _register_builtins(KhScope *_builtins_scope);
-extern void _register_globals(KhContext *ctx);
 
-// Create a new scope. NULL can be passed as the parent, which is usually only done for either the
-// builtins scope or sandboxed scopes.
 KhScope* kh_scope_new(KhScope *parent) {
-	KhScope *scope = g_slice_new0(KhScope);
+	KhScope *scope = GC_NEW(KhScope);
 	scope->parent = parent;
 	// Can use g_direct_equal as variables are referenced by symbols, which are interned
 	scope->table = g_hash_table_new(g_str_hash, g_direct_equal);
@@ -60,12 +62,11 @@ KhScope* kh_scope_new(KhScope *parent) {
 }
 
 void kh_scope_add(KhScope *scope, char *name, KhValue *val) {
-	// This cast is okay as the interned string is guaranteed to continue to exist
+	// This cast is okay, as the interned string is guaranteed to continue to exist.
 	g_hash_table_replace(scope->table, (gchar*) g_intern_string(name), val);
 }
 
 KhValue* kh_scope_lookup(KhScope *scope, char *name) {
-	// Walk the chain of scopes up as far as we can
 	for (; scope != NULL; scope = scope->parent) {
 		KhValue *value = g_hash_table_lookup(scope->table, name);
 		if (value) return value;
@@ -74,91 +75,7 @@ KhValue* kh_scope_lookup(KhScope *scope, char *name) {
 	return NULL;
 }
 
-KhContext* kh_context_new() {
-	static bool core_init_done = false;
-	
-	// Have to initialize core values that are used by all execution contexts
-	if (!core_init_done) {
-		kh_nil = kh_new(KH_NIL);
-
-		_builtins_scope = kh_scope_new(NULL);
-		_register_builtins(_builtins_scope);
-
-		core_init_done = true;
-	}
-
-	KhContext *ctx = g_slice_new0(KhContext);
-	ctx->global_scope = ctx->scope = kh_scope_new(_builtins_scope); // The global scope for the new context
-	ctx->field_sets = g_hash_table_new(g_direct_hash, g_direct_equal); // The mapping of KhValue locations to field sets
-	ctx->prototypes = g_hash_table_new(g_direct_hash, g_direct_equal); // The mapping of KhValues to their prototype KhValues
-
-	_register_globals(ctx);
-
-	return ctx;
-}
-
-KhScope* kh_context_get_scope(KhContext *ctx) {
-	return ctx->scope;
-}
-
-void kh_context_set_scope(KhContext *ctx, KhScope *scope) {
-	ctx->scope = scope;
-}
-
-KhScope* kh_context_new_scope(KhContext *ctx) {
-	return kh_scope_new(ctx->scope);
-}
-
-KhScope* kh_context_push_scope(KhContext *ctx) {
-	KhScope *scope = kh_context_new_scope(ctx);
-	ctx->scope = scope;
-
-	return scope;
-}
-
-KhScope* kh_context_pop_scope(KhContext *ctx) {
-	KhScope *scope = ctx->scope;
-	g_assert(scope->parent != NULL);
-	ctx->scope = scope->parent;
-
-	return scope;
-}
-
-void kh_set_error(KhContext *ctx, KhValue *error) {
-	ctx->error = error;
-}
-
-KhValue* kh_get_error(KhContext *ctx) {
-	return ctx->error;
-}
-
-KhFunc* kh_func_new(const gchar *name, KhValue *form, long min_argc, long max_argc, char **argnames, KhScope *scope, bool is_direct) {
-	KhFunc *result = g_slice_new0(KhFunc);
-	result->name = g_strdup(name);
-	result->form = form;
-	result->min_argc = min_argc;
-	result->max_argc = max_argc;
-	result->argnames = argnames;
-	result->scope = scope;
-	result->is_direct = is_direct;
-
-	return result;
-}
-
-KhFunc* kh_func_new_c(const gchar *name, KhCFunc c_func, long min_argc, long max_argc, bool is_direct) {
-	KhFunc *result = g_slice_new0(KhFunc);
-	result->name = g_strdup(name);
-	result->c_func = c_func;
-	result->min_argc = min_argc;
-	result->max_argc = max_argc;
-	result->is_direct = is_direct;
-
-	return result;
-}
-
-const gchar* kh_func_get_name(KhFunc *func) {
-	return func->name;
-}
+// ## Things
 
 static GHashTable* _get_field_set(KhContext *ctx, KhValue *value, gboolean autovivify) {
 	GHashTable *result = g_hash_table_lookup(ctx->field_sets, value);
@@ -226,41 +143,202 @@ bool kh_set_field(KhContext *ctx, KhValue *value, const gchar *name, KhValue *co
 	return true;
 }
 
+
+// # Contexts
+
+// Each separate Scarab execution environment has a context, which contains the scopes, global
+// definitions and other status information for that environment.
+struct _KhContext {
+	// Currently, each context has only a single global scope. This scope contains, among other
+	// things, the prototype things for the base types.
+	KhScope *global_scope;
+	// As we move through different functions, the current active scope will change.
+	KhScope *scope;
+	// We also have to keep track of the most recent error, so it is available after the
+	// interpreter's stack has unwound.
+	KhValue *error;
+
+	// Instead of holding the child values of each thing within the given `KhValue`, we store them
+	// as a global map-of-maps.
+	GHashTable *field_sets;
+	// A similar approach is used for the prototype links of each thing.
+	GHashTable *prototypes;
+};
+
+// This function has to be called with the full context so that the global things can have their
+// fields set.
+//
+// Also, as the base types can be extended, it has to be called for every new context.
+extern void _register_globals(KhContext *ctx);
+
+KhContext* kh_context_new() {
+	static bool core_init_done = false;
+	
+	// This is the singleton logic for the builtins scope (and a few other small details).
+	if (!core_init_done) {
+		// For instance, we only need one nil (and this way, we can compare it pointerwise).
+		kh_nil = kh_new(KH_NIL);
+
+		_builtins_scope = kh_scope_new(NULL);
+		_register_builtins(_builtins_scope);
+
+		core_init_done = true;
+	}
+
+	KhContext *ctx = GC_NEW(KhContext);
+	ctx->global_scope = ctx->scope = kh_scope_new(_builtins_scope); // The global scope for the new context
+	ctx->field_sets = g_hash_table_new(g_direct_hash, g_direct_equal); // The mapping of KhValue locations to field sets
+	ctx->prototypes = g_hash_table_new(g_direct_hash, g_direct_equal); // The mapping of KhValues to their prototype KhValues
+
+	_register_globals(ctx);
+
+	return ctx;
+}
+
+KhScope* kh_context_get_scope(KhContext *ctx) {
+	return ctx->scope;
+}
+
+void kh_context_set_scope(KhContext *ctx, KhScope *scope) {
+	ctx->scope = scope;
+}
+
+KhScope* kh_context_new_scope(KhContext *ctx) {
+	return kh_scope_new(ctx->scope);
+}
+
+KhScope* kh_context_push_scope(KhContext *ctx) {
+	KhScope *scope = kh_context_new_scope(ctx);
+	ctx->scope = scope;
+
+	return scope;
+}
+
+KhScope* kh_context_pop_scope(KhContext *ctx) {
+	KhScope *scope = ctx->scope;
+	g_assert(scope->parent != NULL);
+	ctx->scope = scope->parent;
+
+	return scope;
+}
+
+void kh_set_error(KhContext *ctx, KhValue *error) {
+	ctx->error = error;
+}
+
+KhValue* kh_get_error(KhContext *ctx) {
+	return ctx->error;
+}
+
+// # Functions
+
+// Each function record has to contain both the information to validate and bind function parameters
+// and the actual code (whether native or Scarab).
+//
+// Also, a function can be direct, which means that its arguments are not evaluated before being
+// passed to the function. This is similar to upvars in Tcl, and is our current cheap replacement
+// for macros.
+struct _KhFunc {
+	const gchar *name;
+
+	KhValue *form;
+	KhScope *scope;
+	long min_argc;
+	long max_argc;
+	char **argnames;
+
+	KhCFunc c_func;
+
+	bool is_direct;
+};
+
+KhFunc* kh_func_new(const gchar *name, KhValue *form, long min_argc, long max_argc, char **argnames, KhScope *scope, bool is_direct) {
+	KhFunc *result = GC_NEW(KhFunc);
+	result->name = g_strdup(name);
+	result->form = form;
+	result->min_argc = min_argc;
+	result->max_argc = max_argc;
+	result->argnames = argnames;
+	result->scope = scope;
+	result->is_direct = is_direct;
+
+	return result;
+}
+
+KhFunc* kh_func_new_c(const gchar *name, KhCFunc c_func, long min_argc, long max_argc, bool is_direct) {
+	KhFunc *result = GC_NEW(KhFunc);
+	result->name = g_strdup(name);
+	result->c_func = c_func;
+	result->min_argc = min_argc;
+	result->max_argc = max_argc;
+	result->is_direct = is_direct;
+
+	return result;
+}
+
+const gchar* kh_func_get_name(KhFunc *func) {
+	return func->name;
+}
+
+// # Evaluator
+
+// This evaluator is a classic Lisp-family evaluator, with (currently) no optimizations such as
+// bytecode compilation.
 KhValue* kh_eval(KhContext *ctx, KhValue *form) {
 	KhValue *value;
 
+	// ## Atomic values
+
 	switch (form->type) {
+		// All of the below atomic types evaluate to themselves.
 		case KH_NIL:
 		case KH_INT:
 		case KH_STRING:
 		case KH_FUNC:
 		case KH_THING:
 			return form;
+
+		// Evaluating a symbol will look it up in the current and all containing scopes, returning
+		// an error if it does not exist.
 		case KH_SYMBOL:
 			value = kh_scope_lookup(ctx->scope, form->d_str);
 
 			if (value == NULL) KH_FAIL(undefined-variable, "%s", form->d_str);
 
 			return value;
+
+		// This is a value with a preceding `'`, which should be treated as if it were atomic.
 		case KH_QUOTED:
 			return form->d_quoted;
+
+		// Finally, if we get an actual form, we get to the interesting bit.
 		case KH_CELL:
 			break;
 	}
 
-	// Easiest way to resolve symbols/lambdas referring to funcs
+	// # Forms
+	//
+	// First, we have to evaluate the first item in the form to figure out what we're calling.
 	KhValue *head = kh_eval(ctx, form->d_left);
 	_REQUIRE(head);
 
+	// If the result of that evaluation wasn't a function, we either:
 	long form_len = kh_list_length(form);
 	if (!KH_IS_FUNC(head)) {
 		if (form_len == 1) {
+			// return it unmodified if there were no arguments, or:
 			return head;
 		} else {
+			// yell if there were arguments, as this is probably an error.
+			//
+			// It may be worth doing this in all cases, as this would match Scheme and catch cases
+			// where the user thought they were calling a function that takes no arguments.
 			KH_FAIL(not-func, "Tried to evaluate %s as a function", kh_inspect(head));
 		}
 	}
 
+	// Once that error checking is done, we then make a list of all the arguments and pass it to
+	// `apply`.
 	long argc = form_len - 1;
 	KhValue *argv[argc];
 
@@ -271,6 +349,7 @@ KhValue* kh_eval(KhContext *ctx, KhValue *form) {
 }
 
 KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv) {
+	// If this is not a direct function, we have to get the value of each of the arguments.
 	if (!func->is_direct) {
 		for (long i = 0; i < argc; i++) {
 			argv[i] = kh_eval(ctx, argv[i]);
@@ -278,7 +357,10 @@ KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv) {
 		}
 	}
 
+	// Currently, argument validation is limited to checking argument counts.
 	if (argc < func->min_argc || argc > func->max_argc) {
+		// It's worth noting that `LONG_MAX` is being used as a cheap way of saying "can accept an
+		// infinite number of arguments."
 		if (func->max_argc == LONG_MAX) {
 			KH_FAIL(invalid-call, "Called %s with %ld arguments, expected %ld or more", func->name, argc, func->min_argc);
 		} else if (func->min_argc == func->max_argc) {
@@ -289,16 +371,24 @@ KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv) {
 	}
 
 	if (func->c_func) {
+		// Evaluating C functions is easy; we just pass off the arguments to the native
+		// implementation.
 		return func->c_func(ctx, argc, argv);
 	} else {
+		// If it's a Scarab function, we have to create a new scope whose parent is the scope where
+		// the function was defined. Lexical scoping, ladies and gentlemen.
+		//
+		// We also need to save the old scope to restore it at the end.
 		KhScope *prev_scope = kh_context_get_scope(ctx);
 		KhScope *func_scope = kh_scope_new(func->scope);
+		kh_context_set_scope(ctx, func_scope);
 
+		// Each of the argument values needs to be bound within this new scope.
 		for (long i = 0; i < argc; i++) {
 			kh_scope_add(func_scope, func->argnames[i], argv[i]);
 		}
 
-		kh_context_set_scope(ctx, func_scope);
+		// Finally, we evaluate the function's body and restore the old scope.
 		KhValue *result = kh_eval(ctx, func->form);
 		_REQUIRE(result);
 		kh_context_set_scope(ctx, prev_scope);
