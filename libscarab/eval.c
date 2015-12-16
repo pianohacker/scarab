@@ -50,20 +50,19 @@ struct _KhScope {
 // Each separate Scarab execution environment has a context, which contains the scopes, global
 // definitions and other status information for that environment.
 struct _KhContext {
-	// Currently, each context has only a single global scope. This scope contains, among other
-	// things, the prototype things for the base types.
+	// Currently, each context has only a single global scope.
 	KhScope *global_scope;
 	// As we move through different functions, the current active scope will change.
 	KhScope *scope;
+
+	// TODO: Each registered type defined in this context needs its own entry in the user types
+	// table.
+	
+	// TODO: All bindings defined in this context need to be tracked.
+
 	// We also have to keep track of the most recent error, so it is available after the
 	// interpreter's stack has unwound.
 	KhValue *error;
-
-	// Instead of holding the child values of each thing within the given `KhValue`, we store them
-	// as a global map-of-maps.
-	GHashTable *field_sets;
-	// A similar approach is used for the prototype links of each thing.
-	GHashTable *prototypes;
 };
 
 // ## Functions
@@ -122,79 +121,10 @@ KhValue* kh_scope_lookup(KhScope *scope, char *name) {
 	return NULL;
 }
 
-// ## Things
-
-static GHashTable* _get_field_set(KhContext *ctx, KhValue *value, gboolean autovivify) {
-	GHashTable *result = g_hash_table_lookup(ctx->field_sets, value);
-
-	if (result == NULL && autovivify) {
-		result = g_hash_table_new(g_str_hash, g_direct_equal);
-		g_hash_table_replace(ctx->field_sets, value, result);
-	}
-
-	return result;
-}
-
-static KhValue* _get_prototype(KhContext *ctx, KhValue *value) {
-	KhValue *result = g_hash_table_lookup(ctx->prototypes, value);
-
-	if (result == NULL) {
-		gchar *global_name = NULL;
-		switch (value->type) {
-			case KH_INT: global_name = "int"; break;
-			case KH_STRING: global_name = "string"; break;
-			case KH_CELL: global_name = "cell"; break;
-			case KH_SYMBOL: global_name = "symbol"; break;
-			case KH_FUNC: global_name = "func"; break;
-			default: break;
-		}
-
-		if (global_name) return kh_scope_lookup(ctx->global_scope, (gchar*) g_intern_string(global_name));
-	}
-
-	return result;
-}
-
-KhValue* kh_get_field(KhContext *ctx, KhValue *value, const gchar *name) {
-	if (value == kh_nil) return NULL;
-
-	name = g_intern_string(name);
-
-	while (value != NULL) {
-		GHashTable *field_set = _get_field_set(ctx, value, false);
-
-		if (field_set) {
-			KhValue *result = g_hash_table_lookup(field_set, name);
-
-			if (result) return result;
-		}
-
-		value = _get_prototype(ctx, value);
-	}
-
-	return NULL;
-}
-
-bool kh_set_field(KhContext *ctx, KhValue *value, const gchar *name, KhValue *content) {
-	if (value == kh_nil) {
-		KH_ERROR(bad-field, "cannot set properties on nil");	
-		return false;
-	}
-
-	const gchar *intern_name = g_intern_string(name);
-
-	GHashTable *field_set = _get_field_set(ctx, value, true);
-	// We're playing fast and loose with casting as we never destroy keys
-	g_hash_table_replace(field_set, (gchar*) intern_name, content);
-
-	return true;
-}
-
-
 // # Contexts
 
-// This function has to be called with the full context so that the global things can have their
-// fields set.
+// This function has to be called with the full context so that the default types can have their
+// bindings set.
 //
 // Also, as the base types can be extended, it has to be called for every new context.
 extern void _register_globals(KhContext *ctx);
@@ -215,8 +145,6 @@ KhContext* kh_context_new() {
 
 	KhContext *ctx = GC_NEW(KhContext);
 	ctx->global_scope = ctx->scope = kh_scope_new(_builtins_scope); // The global scope for the new context
-	ctx->field_sets = g_hash_table_new(g_direct_hash, g_direct_equal); // The mapping of KhValue locations to field sets
-	ctx->prototypes = g_hash_table_new(g_direct_hash, g_direct_equal); // The mapping of KhValues to their prototype KhValues
 
 	_register_globals(ctx);
 
@@ -303,7 +231,6 @@ KhValue* kh_eval(KhContext *ctx, KhValue *form) {
 		case KH_INT:
 		case KH_STRING:
 		case KH_FUNC:
-		case KH_THING:
 		case KH_RECORD_TYPE:
 		case KH_RECORD:
 			return form;
@@ -405,43 +332,4 @@ KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv) {
 
 		return result;
 	}
-}
-
-KhValue* kh_call_field(KhContext *ctx, KhValue *self, char *method, long argc, KhValue **argv) {
-	KhValue *head = kh_get_field(ctx, self, method);
-	if (!head) KH_FAIL(bad-field, "no such method %s", method);
-	if (!KH_IS_FUNC(head)) KH_FAIL(not-func, "Tried to evaluate %s as a function", kh_inspect(head));
-
-	long apply_argc = argc + 1;
-	KhValue *apply_argv[apply_argc];
-
-	apply_argv[0] = kh_new_quoted(self); // Copy over the object
-	memcpy(apply_argv + 1, argv, sizeof(KhValue*) * (apply_argc - 1)); // Copy over the arguments
-
-	return kh_apply(ctx, head->d_func, apply_argc, apply_argv);
-}
-
-KhValue* kh_call_field_values(KhContext *ctx, KhValue *self, char *method, ...) {
-	long argc = 0;
-
-	// We have to know the number of arguments in advance to allocate stack storage, so we have to
-	// pre-scan the varargs list.
-	va_list args;
-	va_start(args, method);
-
-	while (va_arg(args, KhValue*)) argc++;
-
-	va_end(args);
-
-	KhValue *argv[argc];
-
-	if (argc) {
-		va_start(args, method);
-
-		for (long i = 0; i < argc; i++) argv[i] = va_arg(args, KhValue*);
-
-		va_end(args);
-	}
-
-	return kh_call_field(ctx, self, method, argc, argv);
 }

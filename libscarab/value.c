@@ -33,7 +33,6 @@ static char *_value_type_names[] = {
 	"cell",
 	"symbol",
 	"func",
-	"thing",
 	"quoted",
 	"record-type",
 	"record",
@@ -97,10 +96,6 @@ KhValue* kh_new_quoted(KhValue *val) {
 	value->d_quoted = val;
 
 	return value;
-}
-
-KhValue* kh_new_thing() {
-	return kh_new(KH_THING);
 }
 
 KhValue* kh_new_record_type(KhRecordType *type) {
@@ -184,9 +179,6 @@ static void _inspect(const KhValue *value, GString *result) {
 			break;
 		case KH_FUNC:
 			_inspect_func(value, result);
-			break;
-		case KH_THING:
-			g_string_append(result, "*thing*");
 			break;
 		case KH_QUOTED:
 			g_string_append(result, "(quote ");
