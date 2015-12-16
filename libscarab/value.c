@@ -20,8 +20,11 @@
 #include <glib.h>
 #include <stdbool.h>
 
-#include "eval.h"
+// We have to include this first due to some circular-reference mess in the struct definitions.
 #include "value.h"
+
+#include "eval.h"
+#include "record.h"
 
 static char *_value_type_names[] = {
 	"nil",
@@ -115,13 +118,13 @@ KhValue* kh_new_record(KhRecord *record) {
 }
 
 // For _inspect_cell
-static void _inspect(KhValue *value, GString *result);
+static void _inspect(const KhValue *value, GString *result);
 
-static void _inspect_int(KhValue *value, GString *result) {
+static void _inspect_int(const KhValue *value, GString *result) {
 	g_string_append_printf(result, "%ld", value->d_int);
 }
 
-static void _inspect_string(KhValue *value, GString *result) {
+static void _inspect_string(const KhValue *value, GString *result) {
 	char *repr = g_strescape(value->d_str, "");
 	g_string_append_c(result, '"');
 	g_string_append(result, repr);
@@ -129,7 +132,7 @@ static void _inspect_string(KhValue *value, GString *result) {
 	g_free(repr);
 }
 
-static void _inspect_cell(KhValue *value, GString *result, bool in_cell) {
+static void _inspect_cell(const KhValue *value, GString *result, bool in_cell) {
 	if (!in_cell) g_string_append_c(result, '(');
 
 	if (value->d_right->type == KH_CELL) {
@@ -147,11 +150,22 @@ static void _inspect_cell(KhValue *value, GString *result, bool in_cell) {
 	if (!in_cell) g_string_append_c(result, ')');
 }
 
-static void _inspect_func(KhValue *value, GString *result) {
+static void _inspect_func(const KhValue *value, GString *result) {
 	g_string_append_printf(result, "*function \"%s\"*", kh_func_get_name(value->d_func));
 }
 
-static void _inspect(KhValue *value, GString *result) {
+static bool _inspect_record_pair_cb(const char *key, const KhValue *value, void *userdata) {
+	GString *result = (GString*) userdata;
+
+	g_string_append_c(result, ' ');
+	g_string_append(result, key);
+	g_string_append_c(result, ' ');
+	_inspect(value, result);
+
+	return true;
+}
+
+static void _inspect(const KhValue *value, GString *result) {
 	switch (value->type) {
 		case KH_NIL:
 			g_string_append(result, "nil");
@@ -179,10 +193,18 @@ static void _inspect(KhValue *value, GString *result) {
 			_inspect(value->d_quoted, result);
 			g_string_append_c(result, ')');
 			break;
+		case KH_RECORD_TYPE:
+			g_string_append(result, "*record-type*");
+			break;
+		case KH_RECORD:
+			g_string_append(result, "(*record");
+			kh_record_foreach(value->d_record, _inspect_record_pair_cb, result);
+			g_string_append_c(result, ')');
+			break;
 	}
 }
 
-char* kh_inspect(KhValue *value) {
+char* kh_inspect(const KhValue *value) {
 	GString *result = g_string_new("");
 
 	_inspect(value, result);

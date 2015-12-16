@@ -21,6 +21,7 @@
 
 #include <gc.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "record.h"
 #include "value.h"
@@ -57,11 +58,11 @@ KhRecordType* kh_record_type_new(char* const *keys) {
 // keys.
 
 struct _KhRecord {
-	KhRecordType *type;
+	const KhRecordType *type;
 	KhValue **values;
 };
 
-KhRecord* kh_record_new(const KhRecordType *type, char* const *keys, const* KhValue *values) {
+KhRecord* kh_record_new(const KhRecordType *type, char* const *keys, KhValue* const *values) {
 	KhRecord *record = GC_NEW(KhRecord);
 	record->type = type;
 	record->values = GC_MALLOC(sizeof(KhValue*) * type->num_keys);
@@ -83,13 +84,16 @@ KhRecord* kh_record_new(const KhRecordType *type, char* const *keys, const* KhVa
 		// Record values default to `nil`.
 		if (j == num_keys) record->values[i] = kh_nil;
 	}
+
+	return record;
 }
 
+// Both setting and getting values in records work basically the same way; the key is searched for
+// in the record type's key list, and the matching value is set/returned.
 bool kh_record_set(KhRecord *record, const char *key, KhValue *value) {
-	KhRecordTYpe *type = record->type;
+	const KhRecordType *type = record->type;
 
-	int i;
-	for (i = 0; i < type->num_keys; i++) {
+	for (int i = 0; i < type->num_keys; i++) {
 		if (strcmp(type->keys[i], key) == 0) {
 			record->values[i] = value;
 			return true;
@@ -99,15 +103,24 @@ bool kh_record_set(KhRecord *record, const char *key, KhValue *value) {
 	return false;
 }
 
-KhValue* kh_record_get(KhRecord *record, const char *key) {
-	KhRecordTYpe *type = record->type;
+KhValue* kh_record_get(const KhRecord *record, const char *key) {
+	const KhRecordType *type = record->type;
 
-	int i;
-	for (i = 0; i < type->num_keys; i++) {
+	for (int i = 0; i < type->num_keys; i++) {
 		if (strcmp(type->keys[i], key) == 0) {
 			return record->values[i];
 		}
 	}
 	
 	return NULL;
+}
+
+bool kh_record_foreach(const KhRecord *record, bool (*callback)(const char*, const KhValue*, void*), void *userdata) {
+	const KhRecordType *type = record->type;
+
+	for (int i = 0; i < type->num_keys; i++) {
+		if (!callback(type->keys[i], record->values[i], userdata)) return false;
+	}
+
+	return true;
 }

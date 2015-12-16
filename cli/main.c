@@ -5,6 +5,7 @@
 #include "eval.c"
 #include "list.h"
 #include "parser.h"
+#include "record.h"
 #include "value.h"
 
 // # Main program

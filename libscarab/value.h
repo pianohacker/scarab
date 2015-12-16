@@ -29,6 +29,8 @@ const char *kh_value_type_name(KhValueType type);
 
 // This is here for the KhValue declaration below, and cannot be filled in until eval.h
 typedef struct _KhFunc KhFunc;
+typedef struct _KhRecordType KhRecordType;
+typedef struct _KhRecord KhRecord;
 
 typedef struct _KhValue {
 	KhValueType type;
@@ -61,6 +63,6 @@ KhValue* kh_new_thing();
 KhValue* kh_new_record_type(KhRecordType *type);
 KhValue* kh_new_record(KhRecord *record);
 
-char* kh_inspect(KhValue *value);
+char* kh_inspect(const KhValue *value);
 
 #endif

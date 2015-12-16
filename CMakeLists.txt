@@ -14,6 +14,7 @@ add_library(libscarab SHARED
 	libscarab/eval.c
 	libscarab/list.c
 	libscarab/parser.c
+	libscarab/record.c
 	libscarab/strfuncs.c
 	libscarab/tokenizer.c
 	libscarab/value.c

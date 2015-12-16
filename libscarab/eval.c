@@ -23,6 +23,7 @@
 // As Scarab is a Lisp-family language, much of the behavior that would be runtime-level in other
 // languages is defined in the builtin functions. Check `builtins.c` for those.
 
+#include <gc.h>
 #include <glib.h>
 #include <limits.h>
 #include <stdarg.h>
@@ -34,7 +35,8 @@
 #include "util.h"
 #include "value.h"
 
-// # Scopes
+// # Struct definitions
+// ## Scopes
 
 // A given scope is rather simple; it only contains a link to its parent (if any) and a map of the
 // variables in it.
@@ -42,6 +44,51 @@ struct _KhScope {
 	KhScope *parent;
 	GHashTable *table;
 };
+
+// ## Contexts
+
+// Each separate Scarab execution environment has a context, which contains the scopes, global
+// definitions and other status information for that environment.
+struct _KhContext {
+	// Currently, each context has only a single global scope. This scope contains, among other
+	// things, the prototype things for the base types.
+	KhScope *global_scope;
+	// As we move through different functions, the current active scope will change.
+	KhScope *scope;
+	// We also have to keep track of the most recent error, so it is available after the
+	// interpreter's stack has unwound.
+	KhValue *error;
+
+	// Instead of holding the child values of each thing within the given `KhValue`, we store them
+	// as a global map-of-maps.
+	GHashTable *field_sets;
+	// A similar approach is used for the prototype links of each thing.
+	GHashTable *prototypes;
+};
+
+// ## Functions
+
+// Each function record has to contain both the information to validate and bind function parameters
+// and the actual code (whether native or Scarab).
+//
+// Also, a function can be direct, which means that its arguments are not evaluated before being
+// passed to the function. This is similar to upvars in Tcl, and is our current cheap replacement
+// for macros.
+struct _KhFunc {
+	const gchar *name;
+
+	KhValue *form;
+	KhScope *scope;
+	long min_argc;
+	long max_argc;
+	char **argnames;
+
+	KhCFunc c_func;
+
+	bool is_direct;
+};
+
+// # Scopes
 
 // Note that Scarab's scoping is lexical. When a scope is created for a new function definition,
 // its parent is the defining function.
@@ -146,25 +193,6 @@ bool kh_set_field(KhContext *ctx, KhValue *value, const gchar *name, KhValue *co
 
 // # Contexts
 
-// Each separate Scarab execution environment has a context, which contains the scopes, global
-// definitions and other status information for that environment.
-struct _KhContext {
-	// Currently, each context has only a single global scope. This scope contains, among other
-	// things, the prototype things for the base types.
-	KhScope *global_scope;
-	// As we move through different functions, the current active scope will change.
-	KhScope *scope;
-	// We also have to keep track of the most recent error, so it is available after the
-	// interpreter's stack has unwound.
-	KhValue *error;
-
-	// Instead of holding the child values of each thing within the given `KhValue`, we store them
-	// as a global map-of-maps.
-	GHashTable *field_sets;
-	// A similar approach is used for the prototype links of each thing.
-	GHashTable *prototypes;
-};
-
 // This function has to be called with the full context so that the global things can have their
 // fields set.
 //
@@ -232,26 +260,6 @@ KhValue* kh_get_error(KhContext *ctx) {
 
 // # Functions
 
-// Each function record has to contain both the information to validate and bind function parameters
-// and the actual code (whether native or Scarab).
-//
-// Also, a function can be direct, which means that its arguments are not evaluated before being
-// passed to the function. This is similar to upvars in Tcl, and is our current cheap replacement
-// for macros.
-struct _KhFunc {
-	const gchar *name;
-
-	KhValue *form;
-	KhScope *scope;
-	long min_argc;
-	long max_argc;
-	char **argnames;
-
-	KhCFunc c_func;
-
-	bool is_direct;
-};
-
 KhFunc* kh_func_new(const gchar *name, KhValue *form, long min_argc, long max_argc, char **argnames, KhScope *scope, bool is_direct) {
 	KhFunc *result = GC_NEW(KhFunc);
 	result->name = g_strdup(name);
@@ -296,6 +304,8 @@ KhValue* kh_eval(KhContext *ctx, KhValue *form) {
 		case KH_STRING:
 		case KH_FUNC:
 		case KH_THING:
+		case KH_RECORD_TYPE:
+		case KH_RECORD:
 			return form;
 
 		// Evaluating a symbol will look it up in the current and all containing scopes, returning
