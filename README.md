@@ -62,13 +62,12 @@ statements):
 ((foo 1 2) (bar 3 4))
 ```
 
-Each of the lists within the top level list is separated by commas. This works perfectly fine across
-multiple lines, but a newline does not automatically separate lists. A comma is required between
-each list (and may be left after the last list, for simplicity's sake):
+Each of the lists within the top level list is separated by commas or newlines:
 
 ```
-{
-    foo 1 2,
-    bar 3 4,
+> '{
+    foo 1 2
+    bar 3 4
 }
+((foo 1 2) (bar 3 4))
 ```
