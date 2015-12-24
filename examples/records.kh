@@ -10,6 +10,7 @@ record-type Human {
 
 def-method {Potato, Human} consume {
 	print "That's not how things work!"
+	print "Stop that!"
 }
 
 set yukon (make Potato 400 30)

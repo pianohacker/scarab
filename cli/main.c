@@ -15,12 +15,11 @@ int main(int argc, char **argv) {
 	KhContext *ctx = kh_context_new();
 
 	// ## File execution
-	// Check for a filename as the first argument
+	// Check for a filename as the first argument.
 	if (argc > 1) {
-		// Parse our input string into a list of lists (assumed to be an open list).
+		// Parse our file into a list of lists (assumed to be an open list).
 		GError *err = NULL;
 		KhValue *forms = kh_parse_file(argv[1], &err);
-		printf("Parsed: %s\n", kh_inspect(forms));
 
 		if (!forms) {
 			fprintf(stderr, "Parse error: %s\n", err->message);

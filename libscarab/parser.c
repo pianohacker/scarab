@@ -275,16 +275,22 @@ static KhValue* _parse_closed_list(KhParserContext *self, KhTokenType terminator
 
 	KhToken *token;
 	while (true) {
-		REQUIRE(_peek(self, &token, err));
 
-		if (!_token_is_value(token)) {
-			if (terminator == ')') {
+		if (terminator == ')') {
+			REQUIRE(_ignore_newlines(self, err));
+			REQUIRE(_peek(self, &token, err));
+
+			if (!_token_is_value(token)) {
 				EXPECT(')');
-			} else {
-				EXPECT(terminator, ',', '\n');
+				break;
 			}
+		} else {
+			REQUIRE(_peek(self, &token, err));
 
-			break;
+			if (!_token_is_value(token)) {
+				EXPECT(terminator, ',', '\n');
+				break;
+			}
 		}
 
 		KhValue *new_value = _parse_value(self, err);
