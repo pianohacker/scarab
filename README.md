@@ -34,7 +34,7 @@ new list syntaxes. The classic syntax for a list still works as expected:
 But there are two new kinds of lists: an operator list and a form list.
 
 Mathematical operators in Lisp have always been awkward, as infix operator notation is used in
-almost every other setting. In Scarab, a list surrounded in square brackets will be turned into
+almost every other setting. In Scarab, a list surrounded in square brackets will be interpreted in
 infix notation:
 
 ```

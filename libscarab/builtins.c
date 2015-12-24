@@ -142,8 +142,8 @@ static KhValue* let(KhContext *ctx, long argc, KhValue **argv) {
 static KhValue* print(KhContext *ctx, long argc, KhValue **argv) {
 	for (long i = 0; i < argc; i++) {
 		// TODO: Make to-string again once bindings are ready
-		KhValue *str = kh_inspect(argv[i]);
-		fputs(str->d_str, stdout);
+		char *str = kh_inspect(argv[i]);
+		fputs(str, stdout);
 		if (i != argc - 1) putchar(' ');
 	}
 
@@ -153,8 +153,6 @@ static KhValue* print(KhContext *ctx, long argc, KhValue **argv) {
 }
 
 // ## `quote` - returns values unevaluated
-//
-// Returns its argument unevaluated.
 static KhValue* quote(KhContext *ctx, long argc, KhValue **argv) {
 	return argv[0];
 }
