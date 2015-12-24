@@ -33,7 +33,7 @@
 #define GROW_IF_NEEDED(str, i, alloc) if (i >= alloc) { alloc = alloc * 2 + 1; str = GC_REALLOC(str, alloc); }
 #define REQUIRE(expr) if (!expr) return false;
 
-#define _SPECIAL_PUNCT ",'{}()[]"
+#define _SPECIAL_PUNCT ",'{}()[]\n"
 
 //> Internal Types
 struct _KhTokenizer {
@@ -145,7 +145,9 @@ char* kh_tokenizer_get_filename(KhTokenizer *self) {
 extern char* kh_token_type_name(KhTokenType token_type) {
 	static char buffer[4] = "' '";
 
-	if (0 <= token_type && token_type < 256) {
+	if (token_type == '\n') {
+		return "'\\n'";
+	} else if (0 <= token_type && token_type < 256) {
 		buffer[1] = token_type;
 		return buffer;
 	} else {
@@ -455,7 +457,8 @@ bool kh_tokenizer_next(KhTokenizer *self, KhToken **result, GError **err) {
 		_consume(self);
 		while (_peek(self, &c, err) && !(c == '\n' || c == EOF)) _consume(self);
 
-		goto retry;
+		*result = _maketoken('\n', line, col);
+		return true;
 	} else if (c == '-' && _peek(self, &nc, err) && nc < 256 && isdigit(nc)) {
 		*result = _maketoken(T_NUMBER, line, col);
 		return _tokenize_number(self, *result, c, err);
@@ -495,7 +498,7 @@ bool kh_tokenizer_next(KhTokenizer *self, KhToken **result, GError **err) {
 			);
 			return false;
 		}
-	} else if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+	} else if (c == ' ' || c == '\t' || c == '\r') {
 		// Do nothing
 		goto retry;
 	} else if (g_unichar_isalpha(c) || g_unichar_ispunct(c)) {

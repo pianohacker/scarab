@@ -24,5 +24,6 @@
 #include "value.h"
 
 KhValue* kh_parse_string(const char *string, GError **err);
+KhValue* kh_parse_file(const char *filename, GError **err);
 
 #endif

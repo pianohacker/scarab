@@ -1,0 +1,22 @@
+record-type Potato {
+	deliciousness
+	calories
+}
+
+record-type Human {
+	name
+	age
+}
+
+def-method {Potato, Human} consume {
+	print "That's not how things work!"
+}
+
+set yukon (make Potato 400 30)
+print [yukon . deliciousness]
+
+set me (make Human "Jesse" 23)
+
+:: (yukon me) consume
+
+: yukon to-string

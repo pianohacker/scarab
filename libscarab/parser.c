@@ -128,6 +128,20 @@ static bool _expect(KhParserContext *self, KhToken *token, GError **err, ...) {
 	}
 }
 
+static bool _ignore_newlines(KhParserContext *self, GError **err) {
+	while (true) {
+		KhToken *token;
+		REQUIRE(_peek(self, &token, err));
+		if (token->type == '\n') {
+			_consume(self);
+		} else {
+			break;
+		}
+	}
+
+	return true;
+}
+
 //> Parser Functions
 static bool _token_is_value(KhToken *token) {
 	// The cast to int is largely to shut up the gcc enum niceties.
@@ -196,14 +210,17 @@ static KhValue* _parse_operator_list(KhParserContext *self, KhTokenType terminat
 	KhValue *operator = NULL;
 	KhToken *token;
 
+	REQUIRE(_ignore_newlines(self, err));
 	REQUIRE(_peek(self, &token, err));
 
 	if (!_token_is_value(token)) {
-		EXPECT('}');
+		REQUIRE(_ignore_newlines(self, err));
+		EXPECT(terminator);
 		return result;
 	}
 
 	while (true) {
+		REQUIRE(_ignore_newlines(self, err));
 		REQUIRE(_peek(self, &token, err));
 
 		if (!_token_is_value(token)) {
@@ -223,6 +240,7 @@ static KhValue* _parse_operator_list(KhParserContext *self, KhTokenType terminat
 
 		result = kh_list_append(result, new_value);
 
+		REQUIRE(_ignore_newlines(self, err));
 		REQUIRE(_peek(self, &token, err));
 
 		if (token->type == terminator) break;
@@ -263,7 +281,7 @@ static KhValue* _parse_closed_list(KhParserContext *self, KhTokenType terminator
 			if (terminator == ')') {
 				EXPECT(')');
 			} else {
-				EXPECT(terminator, ',');
+				EXPECT(terminator, ',', '\n');
 			}
 
 			break;
@@ -296,9 +314,8 @@ static KhValue* _parse_open_list(KhParserContext *self, KhTokenType terminator, 
 			REQUIRE(_peek(self, &token, err));
 		}
 
-		EXPECT(',', terminator);
+		EXPECT(',', '\n', terminator);
 
-		// This is retarded but arguably so is manual memory management
 		if (token->type == terminator) {
 			break;
 		} else {
@@ -389,6 +406,17 @@ static KhValue* _parse(KhParserContext *self, GError **err) {
 KhValue* kh_parse_string(const char *str, GError **err) {
 	KhParserContext *self = GC_NEW(KhParserContext);
 	self->tokenizer = kh_tokenizer_new_from_string(str, err);
+
+	if (!self->tokenizer) {
+		return NULL;
+	}
+
+	return _parse(self, err);
+}
+
+KhValue* kh_parse_file(const char *filename, GError **err) {
+	KhParserContext *self = GC_NEW(KhParserContext);
+	self->tokenizer = kh_tokenizer_new(filename, err);
 
 	if (!self->tokenizer) {
 		return NULL;
