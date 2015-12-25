@@ -218,6 +218,23 @@ const gchar* kh_func_get_name(KhFunc *func) {
 
 // # Evaluator
 
+// First, a small utility function to decide if a value is an atom:
+bool kh_is_atom(KhValue *value) {
+	switch (value->type) {
+		case KH_NIL:
+		case KH_INT:
+		case KH_STRING:
+		case KH_FUNC:
+		case KH_RECORD_TYPE:
+		case KH_RECORD:
+		case KH_QUOTED:
+			return true;
+
+		default:
+			return false;
+	}
+}
+
 // This evaluator is a classic Lisp-family evaluator, with (currently) no optimizations such as
 // bytecode compilation.
 KhValue* kh_eval(KhContext *ctx, KhValue *form) {

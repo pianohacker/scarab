@@ -34,4 +34,6 @@ KhValue* kh_eval(KhContext *ctx, KhValue *form);
 KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv);
 KhValue* kh_apply_values(KhContext *ctx, KhFunc *func, ...);
 
+bool kh_is_atom(KhValue *value);
+
 #endif

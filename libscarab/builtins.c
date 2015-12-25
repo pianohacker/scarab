@@ -72,6 +72,13 @@ static KhValue* add(KhContext *ctx, long argc, KhValue **argv) {
 	return kh_new_int(result);
 }
 
+// ## `atom?` - true if the argument is an atom
+//
+// That is, a simple value that returns itself when evaluated.
+static KhValue* atom(KhContext *ctx, long argc, KhValue **argv) {
+	return kh_is_atom(argv[0]) ? kh_new_int(1) : kh_nil;
+}
+
 // ## `=` - set values in the current scope
 //
 // Sets the symbol with the given name to the given value.
@@ -112,6 +119,13 @@ static KhValue* def_direct(KhContext *ctx, long argc, KhValue **argv) {
 // Evaluates the given form in the current scope.
 static KhValue* eval(KhContext *ctx, long argc, KhValue **argv) {
 	return kh_eval(ctx, argv[0]);
+}
+
+// ## `first` - returns the first element of a list
+//
+// Like `car`, returns the first element of a list.
+static KhValue* first(KhContext *ctx, long argc, KhValue **argv) {
+	return argv[0]->d_left;
 }
 
 // ## `inspect` - returns a string describing a value
@@ -188,22 +202,32 @@ static KhValue* record_type(KhContext *ctx, long argc, KhValue **argv) {
 	return type_value;
 }
 
-#define _REG_VARARGS(name, func, min_argc, max_argc, is_direct) kh_scope_add(_builtins_scope, #name, kh_new_func(kh_func_new_c(#name, func, min_argc, max_argc, is_direct)));
+// ## `rest` - returns all but the first element of a list
+//
+// Like `cdr`, returns all but the first element of a list.
+static KhValue* rest(KhContext *ctx, long argc, KhValue **argv) {
+	return argv[0]->d_right;
+}
+
+#define _REG_VARARGS(name, func, min_argc, max_argc, is_direct) kh_scope_add(_builtins_scope, name, kh_new_func(kh_func_new_c(#name, func, min_argc, max_argc, is_direct)));
 #define _REG(name, func, argc, is_direct) _REG_VARARGS(name, func, argc, argc, is_direct)
 
 void _register_builtins(KhScope *_builtins_scope) {
-	_REG_VARARGS(+, add, 1, LONG_MAX, false);
-	_REG(=, set, 2, true);
-	_REG(def, def, 3, true);
-	_REG(def-direct, def_direct, 3, true);
-	_REG(eval, eval, 1, false);
-	_REG(inspect, inspect, 1, false);
-	_REG(inspect-direct, inspect, 1, true);
-	_REG(lambda, lambda, 2, true);
-	_REG(let, let, 2, true);
-	_REG_VARARGS(print, print, 0, LONG_MAX, false);
-	_REG(quote, quote, 1, true);
-	_REG(record-type, record_type, 2, true);
+	_REG_VARARGS("+", add, 1, LONG_MAX, false);
+	_REG("=", set, 2, true);
+	_REG("atom?", atom, 1, false);
+	_REG("def", def, 3, true);
+	_REG("def-direct", def_direct, 3, true);
+	_REG("eval", eval, 1, false);
+	_REG("first", first, 1, false);
+	_REG("inspect", inspect, 1, false);
+	_REG("inspect-direct", inspect, 1, true);
+	_REG("lambda", lambda, 2, true);
+	_REG("let", let, 2, true);
+	_REG_VARARGS("print", print, 0, LONG_MAX, false);
+	_REG("quote", quote, 1, true);
+	_REG("record-type", record_type, 2, true);
+	_REG("rest", rest, 1, false);
 }
 
 void _register_globals(KhContext *ctx) {
