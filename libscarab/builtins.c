@@ -19,6 +19,7 @@
 // These are Scarab's builtin functions, which form much of what would be in the interpreter in
 // other languages.
 
+#include <gc.h>
 #include <glib.h>
 #include <limits.h>
 #include <stdio.h>
@@ -26,27 +27,32 @@
 
 #include "eval.h"
 #include "list.h"
+#include "record.h"
 #include "util.h"
 #include "value.h"
 
 // # Utility functions
 
-// This parses a list of argument descriptions into its component pieces.
-static long _parse_arg_desc(KhValue *arg_desc, char ***func_argnames) {
-	long argc = kh_list_length(arg_desc);
-	*func_argnames = g_malloc(sizeof(char*) * argc);
+// This parses a list of strings into a C array of strings.
+//
+// It both returns the length and NULL-terminates the array to allow for different argument passing
+// strategies.
+static long _extract_string_list(KhValue *str_list, char ***strings) {
+	long length = kh_list_length(str_list);
+	*strings = GC_MALLOC(sizeof(char*) * (length + 1));
 
 	long i = 0;
-	KH_ITERATE(arg_desc) (*func_argnames)[i++] = elem->d_left->d_str;
+	KH_ITERATE(str_list) (*strings)[i++] = elem->d_left->d_str;
+	(*strings)[i++] = NULL;
 
-	return argc;
+	return length;
 }
 
 // In order to create a function from its argument list and underlying form, we have to:
 static KhValue* _create_func(KhContext *ctx, const gchar *name, KhValue *arg_desc, KhValue *form, bool is_direct) {
 	char **func_argnames;
 	// First, parse the argument names into a more palatable form.
-	long func_argc = _parse_arg_desc(arg_desc, &func_argnames);
+	long func_argc = _extract_string_list(arg_desc, &func_argnames);
 
 	// Then, we have to create a function definition and a value to wrap that function.
 	return kh_new_func(kh_func_new(name, form, func_argc, func_argc, func_argnames, kh_context_get_scope(ctx), is_direct));
@@ -64,6 +70,17 @@ static KhValue* add(KhContext *ctx, long argc, KhValue **argv) {
 	}
 
 	return kh_new_int(result);
+}
+
+// ## `=` - set values in the current scope
+//
+// Sets the symbol with the given name to the given value.
+static KhValue* set(KhContext *ctx, long argc, KhValue **argv) {
+	KhValue *value = kh_eval(ctx, argv[1]);
+	_REQUIRE(value);
+	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, value);
+
+	return kh_nil;
 }
 
 // ## `def` - defines functions
@@ -157,13 +174,18 @@ static KhValue* quote(KhContext *ctx, long argc, KhValue **argv) {
 	return argv[0];
 }
 
-// ## `set` - set values in the current scope
+// ## `record-type` - Creates a new record type
 //
-// Sets the symbol with the given name to the given value.
-static KhValue* set(KhContext *ctx, long argc, KhValue **argv) {
-	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, argv[1]);
+// Creates a new record type with the given name and list of members.
+static KhValue* record_type(KhContext *ctx, long argc, KhValue **argv) {
+	char **members;
+	_extract_string_list(argv[1], &members);
 
-	return kh_nil;
+	KhRecordType *type = kh_record_type_new(members);
+	KhValue *type_value = kh_new_record_type(type);
+	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, type_value);
+
+	return type_value;
 }
 
 #define _REG_VARARGS(name, func, min_argc, max_argc, is_direct) kh_scope_add(_builtins_scope, #name, kh_new_func(kh_func_new_c(#name, func, min_argc, max_argc, is_direct)));
@@ -181,6 +203,7 @@ void _register_builtins(KhScope *_builtins_scope) {
 	_REG(let, let, 2, true);
 	_REG_VARARGS(print, print, 0, LONG_MAX, false);
 	_REG(quote, quote, 1, true);
+	_REG(record-type, record_type, 2, true);
 }
 
 void _register_globals(KhContext *ctx) {

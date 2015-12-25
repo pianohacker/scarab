@@ -29,6 +29,7 @@
 #include "parser.h"
 #include "strfuncs.h"
 #include "tokenizer.h"
+#include "util.h"
 
 typedef struct {
 	KhTokenizer *tokenizer;
@@ -36,7 +37,6 @@ typedef struct {
 } KhParserContext;
 
 #define EXPECT(...) if (!_expect(self, token, err, __VA_ARGS__, 0)) return NULL;
-#define REQUIRE(expr) if (!expr) return NULL;
 
 static bool _read(KhParserContext *self, KhToken **token, GError **err) {
 	if (self->peek_token) {
@@ -131,7 +131,7 @@ static bool _expect(KhParserContext *self, KhToken *token, GError **err, ...) {
 static bool _ignore_newlines(KhParserContext *self, GError **err) {
 	while (true) {
 		KhToken *token;
-		REQUIRE(_peek(self, &token, err));
+		_REQUIRE(_peek(self, &token, err));
 		if (token->type == '\n') {
 			_consume(self);
 		} else {
@@ -161,7 +161,7 @@ static bool _token_is_value(KhToken *token) {
 
 static KhValue* _parse_number(KhParserContext *self, GError **err) {
 	KhToken *token;
-	REQUIRE(_read(self, &token, err));
+	_REQUIRE(_read(self, &token, err));
 
 	char *end;
 	errno = 0;
@@ -180,7 +180,7 @@ static KhValue* _parse_number(KhParserContext *self, GError **err) {
 
 static KhValue* _parse_string(KhParserContext *self, GError **err) {
 	KhToken *token;
-	REQUIRE(_read(self, &token, err));
+	_REQUIRE(_read(self, &token, err));
 
 	KhValue *result = kh_new_string(token->val);
 
@@ -189,7 +189,7 @@ static KhValue* _parse_string(KhParserContext *self, GError **err) {
 
 static KhValue* _parse_identifier(KhParserContext *self, GError **err) {
 	KhToken *token;
-	REQUIRE(_read(self, &token, err));
+	_REQUIRE(_read(self, &token, err));
 
 	KhValue *result;
 
@@ -210,18 +210,18 @@ static KhValue* _parse_operator_list(KhParserContext *self, KhTokenType terminat
 	KhValue *operator = NULL;
 	KhToken *token;
 
-	REQUIRE(_ignore_newlines(self, err));
-	REQUIRE(_peek(self, &token, err));
+	_REQUIRE(_ignore_newlines(self, err));
+	_REQUIRE(_peek(self, &token, err));
 
 	if (!_token_is_value(token)) {
-		REQUIRE(_ignore_newlines(self, err));
+		_REQUIRE(_ignore_newlines(self, err));
 		EXPECT(terminator);
 		return result;
 	}
 
 	while (true) {
-		REQUIRE(_ignore_newlines(self, err));
-		REQUIRE(_peek(self, &token, err));
+		_REQUIRE(_ignore_newlines(self, err));
+		_REQUIRE(_peek(self, &token, err));
 
 		if (!_token_is_value(token)) {
 			_error(
@@ -240,8 +240,8 @@ static KhValue* _parse_operator_list(KhParserContext *self, KhTokenType terminat
 
 		result = kh_list_append(result, new_value);
 
-		REQUIRE(_ignore_newlines(self, err));
-		REQUIRE(_peek(self, &token, err));
+		_REQUIRE(_ignore_newlines(self, err));
+		_REQUIRE(_peek(self, &token, err));
 
 		if (token->type == terminator) break;
 
@@ -277,15 +277,15 @@ static KhValue* _parse_closed_list(KhParserContext *self, KhTokenType terminator
 	while (true) {
 
 		if (terminator == ')') {
-			REQUIRE(_ignore_newlines(self, err));
-			REQUIRE(_peek(self, &token, err));
+			_REQUIRE(_ignore_newlines(self, err));
+			_REQUIRE(_peek(self, &token, err));
 
 			if (!_token_is_value(token)) {
 				EXPECT(')');
 				break;
 			}
 		} else {
-			REQUIRE(_peek(self, &token, err));
+			_REQUIRE(_peek(self, &token, err));
 
 			if (!_token_is_value(token)) {
 				EXPECT(terminator, ',', '\n');
@@ -308,7 +308,7 @@ static KhValue* _parse_open_list(KhParserContext *self, KhTokenType terminator, 
 
 	KhToken *token;
 	while (true) {
-		REQUIRE(_peek(self, &token, err));
+		_REQUIRE(_peek(self, &token, err));
 
 		if (_token_is_value(token)) {
 			KhValue *new_value = _parse_closed_list(self, terminator, err);
@@ -317,7 +317,7 @@ static KhValue* _parse_open_list(KhParserContext *self, KhTokenType terminator, 
 
 			result = kh_list_append(result, new_value);
 
-			REQUIRE(_peek(self, &token, err));
+			_REQUIRE(_peek(self, &token, err));
 		}
 
 		EXPECT(',', '\n', terminator);
@@ -336,7 +336,7 @@ static KhValue* _parse_value(KhParserContext *self, GError **err) {
 	KhToken *token;
 	KhValue *new_value = NULL;
 
-	REQUIRE(_peek(self, &token, err));
+	_REQUIRE(_peek(self, &token, err));
 
 	bool quote_value = false;
 
@@ -344,7 +344,7 @@ static KhValue* _parse_value(KhParserContext *self, GError **err) {
 		_consume(self);
 		quote_value = true;
 
-		REQUIRE(_peek(self, &token, err));
+		_REQUIRE(_peek(self, &token, err));
 	}
 
 	if (!_token_is_value(token) || token->type == '\'') {
@@ -379,7 +379,7 @@ static KhValue* _parse_value(KhParserContext *self, GError **err) {
 		}
 
 		if (new_value) {
-			REQUIRE(_read(self, &token, err));
+			_REQUIRE(_read(self, &token, err));
 			EXPECT(terminator);
 		}
 	} else if (token->type == T_NUMBER) {
@@ -402,7 +402,7 @@ static KhValue* _parse(KhParserContext *self, GError **err) {
 
 	if (result) {
 		KhToken *token;
-		REQUIRE(_read(self, &token, err));
+		_REQUIRE(_read(self, &token, err));
 		EXPECT(T_EOF);
 	}
 

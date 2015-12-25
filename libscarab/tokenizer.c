@@ -27,11 +27,11 @@
 #include "error.h"
 #include "strfuncs.h"
 #include "tokenizer.h"
+#include "util.h"
 
 //> Macros
 #define FAIL_IF_ERR() if ((err != NULL) && (*err != NULL)) return false;
 #define GROW_IF_NEEDED(str, i, alloc) if (i >= alloc) { alloc = alloc * 2 + 1; str = GC_REALLOC(str, alloc); }
-#define REQUIRE(expr) if (!expr) return false;
 
 #define _SPECIAL_PUNCT ",'{}()[]\n"
 
@@ -472,7 +472,7 @@ bool kh_tokenizer_next(KhTokenizer *self, KhToken **result, GError **err) {
 		*result = _maketoken(T_STRING, line, col);
 		if (!_tokenize_string(self, *result, err)) return false;
 
-		REQUIRE(_read(self, &c, err));
+		_REQUIRE(_read(self, &c, err));
 		if (c == '"') {
 			return true;
 		} else {
@@ -487,7 +487,7 @@ bool kh_tokenizer_next(KhTokenizer *self, KhToken **result, GError **err) {
 		*result = _maketoken(T_STRING, line, col);
 		if (!_tokenize_backquote_string(self, *result, err)) return false;
 
-		REQUIRE(_read(self, &c, err));
+		_REQUIRE(_read(self, &c, err));
 		if (c == '`') {
 			return true;
 		} else {
