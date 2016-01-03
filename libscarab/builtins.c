@@ -128,6 +128,20 @@ static KhValue* first(KhContext *ctx, long argc, KhValue **argv) {
 	return argv[0]->d_left;
 }
 
+// ## `get-key` - gets a key from a record
+//
+// Gets a given key in a record.
+
+static KhValue* get_key(KhContext *ctx, long argc, KhValue **argv) {
+	KhValue *record_value = kh_eval(ctx, argv[0]);
+	_REQUIRE(record_value);
+
+	KhValue *value = kh_record_get(record_value->d_record, argv[1]->d_str);
+	KH_FAIL_UNLESS(value, unknown-key, "No such key %s in record", argv[1]->d_str);
+
+	return value;
+}
+
 // ## `inspect` - returns a string describing a value
 //
 // This will return a string describing the contents of the given value. This may not be directly
@@ -164,6 +178,27 @@ static KhValue* let(KhContext *ctx, long argc, KhValue **argv) {
 	kh_context_pop_scope(ctx);
 
 	return result;
+}
+
+// ## `make` - creates a record
+//
+// Creates a new record of the given type. The correct number of values must be provided in the same
+// order as the original record type.
+static KhValue* make(KhContext *ctx, long argc, KhValue **argv) {
+	const KhRecordType *type = argv[0]->d_record_type;
+	long num_keys = kh_record_type_get_num_keys(type);
+	long num_provided = argc - 1;
+	if (num_provided != num_keys) {
+		KH_FAIL(invalid-make, "Tried to create record with %d values, expected %d", num_provided, num_keys);
+	}
+
+	KhValue *values[num_keys + 1];
+	for (int i = 0; i < num_keys; i++) {
+		values[i] = argv[i + 1];
+	}
+	values[num_keys] = NULL;
+
+	return kh_new_record(kh_record_new_from_values(type, values));
 }
 
 // ## `print` - prints values to the console
@@ -220,10 +255,12 @@ void _register_builtins(KhScope *_builtins_scope) {
 	_REG("def-direct", def_direct, 3, true);
 	_REG("eval", eval, 1, false);
 	_REG("first", first, 1, false);
+	_REG("get-key", get_key, 2, true);
 	_REG("inspect", inspect, 1, false);
 	_REG("inspect-direct", inspect, 1, true);
 	_REG("lambda", lambda, 2, true);
 	_REG("let", let, 2, true);
+	_REG_VARARGS("make", make, 1, LONG_MAX, false);
 	_REG_VARARGS("print", print, 0, LONG_MAX, false);
 	_REG("quote", quote, 1, true);
 	_REG("record-type", record_type, 2, true);

@@ -21,6 +21,7 @@ KhScope* kh_context_pop_scope(KhContext *ctx);
 
 #define KH_ERROR(type, msg, ...) kh_set_error(ctx, kh_new_cell(kh_new_symbol(#type), kh_new_cell(kh_new_string_take(kh_strdupf(msg, ##__VA_ARGS__)), kh_nil)))
 #define KH_FAIL(type, msg, ...) { KH_ERROR(type, msg, __VA_ARGS__); return NULL; }
+#define KH_FAIL_UNLESS(x, type, msg, ...) if (!(x)) KH_FAIL(type, msg, __VA_ARGS__)
 
 void kh_set_error(KhContext *ctx, KhValue *error);
 KhValue* kh_get_error(KhContext *ctx);

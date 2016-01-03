@@ -55,10 +55,8 @@ struct _KhContext {
 	// As we move through different functions, the current active scope will change.
 	KhScope *scope;
 
-	// TODO: Each registered type defined in this context needs its own entry in the user types
-	// table.
-	
-	// TODO: All bindings defined in this context need to be tracked.
+	// All methods defined in this context need to be tracked.
+	GHashTable *methods;
 
 	// We also have to keep track of the most recent error, so it is available after the
 	// interpreter's stack has unwound.
@@ -86,6 +84,16 @@ struct _KhFunc {
 
 	bool is_direct;
 };
+
+// ## Methods
+
+// While this will be expanded in the future to multi-methods, all methods are currently defined for
+// a pair of a record-type and name.
+
+typedef struct {
+	KhRecordType *type;
+	char *name;
+} KhMethod;
 
 // # Scopes
 
@@ -128,6 +136,8 @@ KhValue* kh_scope_lookup(KhScope *scope, char *name) {
 //
 // Also, as the base types can be extended, it has to be called for every new context.
 extern void _register_globals(KhContext *ctx);
+guint _hash_method(const KhMethod *method);
+bool _equal_methods(const KhMethod *method_a, const KhMethod *method_b);
 
 KhContext* kh_context_new() {
 	static bool core_init_done = false;
@@ -144,9 +154,11 @@ KhContext* kh_context_new() {
 	}
 
 	KhContext *ctx = GC_NEW(KhContext);
-	ctx->global_scope = ctx->scope = kh_scope_new(_builtins_scope); // The global scope for the new context
 
+	ctx->global_scope = ctx->scope = kh_scope_new(_builtins_scope); // The global scope for the new context
 	_register_globals(ctx);
+
+	ctx->methods = g_hash_table_new((GHashFunc) _hash_method, (GEqualFunc) _equal_methods);
 
 	return ctx;
 }
@@ -214,6 +226,23 @@ KhFunc* kh_func_new_c(const gchar *name, KhCFunc c_func, long min_argc, long max
 
 const gchar* kh_func_get_name(KhFunc *func) {
 	return func->name;
+}
+
+// # Methods
+
+guint _hash_method(const KhMethod *method) {
+	return g_direct_hash(method->type) ^ g_str_hash(method->name);
+}
+
+bool _equal_methods(const KhMethod *method_a, const KhMethod *method_b) {
+	return method_a->type == method_b->type && strcmp(method_a->name, method_b->name) == 0;
+}
+
+void kh_add_method(KhContext *ctx, KhRecordType *type, const char *name, KhFunc *func) {
+	KhMethod *method = g_new0(KhMethod);
+	method->type = type;
+	method->name = g_strdup(name);
+	g_hash_table_insert(ctx->methods, method, func);
 }
 
 // # Evaluator

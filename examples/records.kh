@@ -1,9 +1,9 @@
-record-type Potato {
+record-type Potato (
 	deliciousness
 	calories
-}
+)
 
 = yukon (make Potato 400 30)
-print [yukon . deliciousness]
+print [yukon get-key deliciousness]
 
 : yukon to-string

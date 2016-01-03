@@ -16,6 +16,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
+// Tokenizer for Scarab code.
+//
+// This may at some point be replaced by an re2c implementation.
+
 #include <ctype.h>
 #include <gc.h>
 #include <glib.h>
@@ -29,13 +33,26 @@
 #include "tokenizer.h"
 #include "util.h"
 
-//> Macros
+// Quick way of stopping and passing an error back up the stack:
 #define FAIL_IF_ERR() if ((err != NULL) && (*err != NULL)) return false;
+
+// This is used for reading in strings of unknown length.
 #define GROW_IF_NEEDED(str, i, alloc) if (i >= alloc) { alloc = alloc * 2 + 1; str = GC_REALLOC(str, alloc); }
+
+// Finally, these are the single character tokens of Scarab's language.
 
 #define _SPECIAL_PUNCT ",'{}()[]\n"
 
-//> Internal Types
+static char *TOKEN_NAMES[15] = {
+	"EOF",
+	"identifier",
+	"number",
+	"decimal",
+	"string",
+};
+
+// # Tokenizer
+// Most of this is prosaic state information.
 struct _KhTokenizer {
 	char *filename;
 	GIOChannel *channel;
@@ -45,19 +62,12 @@ struct _KhTokenizer {
 	int line;
 	int col;
 
+	// This controls the peek mechanism.
 	bool peek_avail;
 	gunichar peeked;
 };
 
-//> Static Data
-static char *TOKEN_NAMES[15] = {
-	"EOF",
-	"identifier",
-	"number",
-	"decimal",
-	"string",
-};
-
+// GC finalizer for a tokenizer.
 void _tokenizer_finalize(KhTokenizer *self, void *data) {
 	if (self->channel) {
 		g_io_channel_shutdown(self->channel, FALSE, NULL);
@@ -65,7 +75,8 @@ void _tokenizer_finalize(KhTokenizer *self, void *data) {
 	}
 }
 
-//> Public Functions
+
+// ## Public API
 
 /**
  * kh_tokenizer_new:

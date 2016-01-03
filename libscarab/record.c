@@ -52,6 +52,10 @@ KhRecordType* kh_record_type_new(char* const *keys) {
 	return type;
 }
 
+long kh_record_type_get_num_keys(const KhRecordType *type) {
+	return type->num_keys;
+}
+
 // # Records
 //
 // Each record has a link back to its type and a list of values in the same order as the original
@@ -86,6 +90,24 @@ KhRecord* kh_record_new(const KhRecordType *type, char* const *keys, KhValue* co
 	}
 
 	return record;
+}
+
+KhRecord* kh_record_new_from_values(const KhRecordType *type, KhValue* const *values) {
+	KhRecord *record = GC_NEW(KhRecord);
+	record->type = type;
+	record->values = GC_MALLOC(sizeof(KhValue*) * type->num_keys);
+
+	// We copy in all the values we got, and set any stragglers to nil.
+	int i;
+
+	for (i = 0; values[i] && i < type->num_keys; i++) record->values[i] = values[i];
+	for (; i < type->num_keys; i++) record->values[i] = kh_nil;
+
+	return record;
+}
+
+const KhRecordType* kh_record_get_type(const KhRecord *record) {
+	return record->type;
 }
 
 // Both setting and getting values in records work basically the same way; the key is searched for
