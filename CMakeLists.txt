@@ -4,9 +4,11 @@ project(scarab)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PKG glib-2.0)
 set(CMAKE_C_FLAGS "-Werror=implicit-function-declaration -std=gnu99 -Wall")
-set(CMAKE_C_FLAGS_DEBUG "-ggdb3 -fsanitize=address")
-# ASAN is confused by Valgrind
-set(CMAKE_C_FLAGS_PROFILE "${CMAKE_C_FLAGS_DEBUG} -fno-sanitize=address -pg")
+# The leak checker is not usually useful (and is confused by GLib).
+set(CMAKE_C_FLAGS_DEBUG "-ggdb3 -fsanitize=address -fno-sanitize=leak -DKH_IS_DEBUG -DGC_DEBUG")
+# ASAN is confused by Valgrind, so disable it. Also, we use sprof (gprof being useless for shared
+# libraries), so we don't want -pg.
+set(CMAKE_C_FLAGS_PROFILE "${CMAKE_C_FLAGS_DEBUG} -UGC_DEBUG -fno-sanitize=address")
 
 add_library(libscarab SHARED
 	libscarab/builtins.c

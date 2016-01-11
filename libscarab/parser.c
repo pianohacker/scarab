@@ -33,73 +33,72 @@
 
 typedef struct {
 	KhTokenizer *tokenizer;
-	KhToken *peek_token;
+
+	bool has_peek;
+	KhToken peek_token;
 } KhParserContext;
 
 #define EXPECT(...) if (!_expect(self, token, err, __VA_ARGS__, 0)) return NULL;
 
-static bool _read(KhParserContext *self, KhToken **token, GError **err) {
-	if (self->peek_token) {
-		KhToken *result = self->peek_token;
-		self->peek_token = NULL;
-		*token = result;
+static bool _read(KhParserContext *self, KhToken *token, GError **err) {
+	if (self->has_peek) {
+		*token = self->peek_token;
+		self->has_peek = false;
 
 		return true;
 	} else {
-		if (!kh_tokenizer_next(self->tokenizer, token, err)) {
-			return false;
-		} else {
-			return true;
-		}
+		return kh_tokenizer_next(self->tokenizer, token, err);
 	}
 }
 
-static bool _peek(KhParserContext *self, KhToken **token, GError **err) {
-	if (self->peek_token) {
+static bool _peek(KhParserContext *self, KhToken *token, GError **err) {
+	if (self->has_peek) {
 		*token = self->peek_token;
 
 		return true;
 	} else {
-		if (!kh_tokenizer_next(self->tokenizer, &(self->peek_token), err)) {
-			return false;
-		} else {
+		if (kh_tokenizer_next(self->tokenizer, &(self->peek_token), err)) {
 			*token = self->peek_token;
+			self->has_peek = true;
 			return true;
+		} else {
+			self->has_peek = false;
+			return false;
 		}
 	}
 }
 
 static void _consume(KhParserContext *self) {
-	g_assert(self->peek_token != NULL);
+	g_assert(self->has_peek);
 
-	self->peek_token = NULL;
+	self->has_peek = false;
 }
 
-static void _error(KhParserContext *self, KhToken *token, KhSyntaxError err_type, char *msg, GError **err) {
+static void _error(KhParserContext *self, KhToken token, KhSyntaxError err_type, char *msg, GError **err) {
 	g_set_error(err,
 		KH_SYNTAX_ERROR,
 		err_type,
 		"%s in %s, line %d, column %d",
 		msg,
 		kh_tokenizer_get_filename(self->tokenizer),
-		token->line,
-		token->col
+		token.line,
+		token.col
 	);
 }
 
-static bool _expect(KhParserContext *self, KhToken *token, GError **err, ...) {
+static bool _expect(KhParserContext *self, KhToken token, GError **err, ...) {
 	va_list args;
 	KhTokenType type;
 
 	va_start(args, err);
 
-	while (type = va_arg(args, KhTokenType), type != 0 && token->type != type);
+	while (type = va_arg(args, KhTokenType), type != 0 && token.type != type);
 
 	va_end(args);
 
 	if (type == 0) {
 		GString *err_string = g_string_new("");
-		g_string_sprintf(err_string, "Unexpected %s, expected one of: ", kh_token_type_name(token->type));
+		g_string_sprintf(err_string, "Unexpected %s, expected one of: ", kh_token_type_name(token.type));
 
 		va_start(args, err);
 		type = va_arg(args, KhTokenType);
@@ -130,9 +129,9 @@ static bool _expect(KhParserContext *self, KhToken *token, GError **err, ...) {
 
 static bool _ignore_newlines(KhParserContext *self, GError **err) {
 	while (true) {
-		KhToken *token;
+		KhToken token = KH_TOKEN_EMPTY;
 		_REQUIRE(_peek(self, &token, err));
-		if (token->type == '\n') {
+		if (token.type == '\n') {
 			_consume(self);
 		} else {
 			break;
@@ -143,9 +142,9 @@ static bool _ignore_newlines(KhParserContext *self, GError **err) {
 }
 
 //> Parser Functions
-static bool _token_is_value(KhToken *token) {
+static bool _token_type_is_value(KhTokenType token_type) {
 	// The cast to int is largely to shut up the gcc enum niceties.
-	switch ((int) token->type) {
+	switch ((int) token_type) {
 		case '\'':
 		case '(':
 		case '[':
@@ -160,12 +159,12 @@ static bool _token_is_value(KhToken *token) {
 }
 
 static KhValue* _parse_number(KhParserContext *self, GError **err) {
-	KhToken *token;
+	KhToken token = KH_TOKEN_EMPTY;
 	_REQUIRE(_read(self, &token, err));
 
 	char *end;
 	errno = 0;
-	long value = strtol(token->val, &end, 10);
+	long value = strtol(token.val, &end, 10);
 
 	if (errno) {
 		_error(self, token, KH_SYNTAX_ERROR_BAD_LITERAL, "Long integer out of range", err);
@@ -179,24 +178,24 @@ static KhValue* _parse_number(KhParserContext *self, GError **err) {
 }
 
 static KhValue* _parse_string(KhParserContext *self, GError **err) {
-	KhToken *token;
+	KhToken token = KH_TOKEN_EMPTY;
 	_REQUIRE(_read(self, &token, err));
 
-	KhValue *result = kh_new_string(token->val);
+	KhValue *result = kh_new_string(token.val);
 
 	return result;
 }
 
 static KhValue* _parse_identifier(KhParserContext *self, GError **err) {
-	KhToken *token;
+	KhToken token = KH_TOKEN_EMPTY;
 	_REQUIRE(_read(self, &token, err));
 
 	KhValue *result;
 
-	if (strcmp(token->val, "nil") == 0) {
+	if (strcmp(token.val, "nil") == 0) {
 		result = kh_nil;
 	} else {
-		result = kh_new_symbol(token->val);
+		result = kh_new_symbol(token.val);
 	}
 
 	return result;
@@ -208,12 +207,12 @@ static KhValue* _parse_value(KhParserContext *self, GError **err);
 static KhValue* _parse_operator_list(KhParserContext *self, KhTokenType terminator, GError **err) {
 	KhValue *result = kh_nil;
 	KhValue *operator = NULL;
-	KhToken *token;
+	KhToken token = KH_TOKEN_EMPTY;
 
 	_REQUIRE(_ignore_newlines(self, err));
 	_REQUIRE(_peek(self, &token, err));
 
-	if (!_token_is_value(token)) {
+	if (!_token_type_is_value(token.type)) {
 		_REQUIRE(_ignore_newlines(self, err));
 		EXPECT(terminator);
 		return result;
@@ -223,12 +222,12 @@ static KhValue* _parse_operator_list(KhParserContext *self, KhTokenType terminat
 		_REQUIRE(_ignore_newlines(self, err));
 		_REQUIRE(_peek(self, &token, err));
 
-		if (!_token_is_value(token)) {
+		if (!_token_type_is_value(token.type)) {
 			_error(
 				self,
 				token,
 				KH_SYNTAX_ERROR_MALFORMED,
-				kh_strdupf("Unexpected %s, expected a value", kh_token_type_name(token->type)),
+				kh_strdupf("Unexpected %s, expected a value", kh_token_type_name(token.type)),
 				err);
 
 			return NULL;
@@ -243,19 +242,19 @@ static KhValue* _parse_operator_list(KhParserContext *self, KhTokenType terminat
 		_REQUIRE(_ignore_newlines(self, err));
 		_REQUIRE(_peek(self, &token, err));
 
-		if (token->type == terminator) break;
+		if (token.type == terminator) break;
 
 		EXPECT(T_IDENTIFIER);
 
 		if (operator) {
 			_consume(self);
 
-			if (strcmp(operator->d_str, token->val) != 0) {
+			if (strcmp(operator->d_str, token.val) != 0) {
 				_error(
 					self,
 					token,
 					KH_SYNTAX_ERROR_MALFORMED,
-					kh_strdupf("Non-matching operator %s in operator list", token->val),
+					kh_strdupf("Non-matching operator %s in operator list", token.val),
 					err);
 				return NULL;
 			}
@@ -273,21 +272,21 @@ static KhValue* _parse_operator_list(KhParserContext *self, KhTokenType terminat
 static KhValue* _parse_closed_list(KhParserContext *self, KhTokenType terminator, GError **err) {
 	KhValue *result = kh_nil;
 
-	KhToken *token;
+	KhToken token = KH_TOKEN_EMPTY;
 	while (true) {
 
 		if (terminator == ')') {
 			_REQUIRE(_ignore_newlines(self, err));
 			_REQUIRE(_peek(self, &token, err));
 
-			if (!_token_is_value(token)) {
+			if (!_token_type_is_value(token.type)) {
 				EXPECT(')');
 				break;
 			}
 		} else {
 			_REQUIRE(_peek(self, &token, err));
 
-			if (!_token_is_value(token)) {
+			if (!_token_type_is_value(token.type)) {
 				EXPECT(terminator, ',', '\n');
 				break;
 			}
@@ -306,11 +305,11 @@ static KhValue* _parse_closed_list(KhParserContext *self, KhTokenType terminator
 static KhValue* _parse_open_list(KhParserContext *self, KhTokenType terminator, GError **err) {
 	KhValue *result = kh_nil;
 
-	KhToken *token;
+	KhToken token = KH_TOKEN_EMPTY;
 	while (true) {
 		_REQUIRE(_peek(self, &token, err));
 
-		if (_token_is_value(token)) {
+		if (_token_type_is_value(token.type)) {
 			KhValue *new_value = _parse_closed_list(self, terminator, err);
 
 			if (!new_value) return NULL;
@@ -322,7 +321,7 @@ static KhValue* _parse_open_list(KhParserContext *self, KhTokenType terminator, 
 
 		EXPECT(',', '\n', terminator);
 
-		if (token->type == terminator) {
+		if (token.type == terminator) {
 			break;
 		} else {
 			_consume(self);
@@ -333,36 +332,36 @@ static KhValue* _parse_open_list(KhParserContext *self, KhTokenType terminator, 
 }
 
 static KhValue* _parse_value(KhParserContext *self, GError **err) {
-	KhToken *token;
+	KhToken token = KH_TOKEN_EMPTY;
 	KhValue *new_value = NULL;
 
 	_REQUIRE(_peek(self, &token, err));
 
 	bool quote_value = false;
 
-	if (token->type == '\'') {
+	if (token.type == '\'') {
 		_consume(self);
 		quote_value = true;
 
 		_REQUIRE(_peek(self, &token, err));
 	}
 
-	if (!_token_is_value(token) || token->type == '\'') {
+	if (!_token_type_is_value(token.type) || token.type == '\'') {
 		_error(
 			self,
 			token,
 			KH_SYNTAX_ERROR_MALFORMED,
-			kh_strdupf("Unexpected %s, expected a value", kh_token_type_name(token->type)),
+			kh_strdupf("Unexpected %s, expected a value", kh_token_type_name(token.type)),
 			err);
 
 		return NULL;
 	}
 
-	if (token->type == '(' || token->type == '[' || token->type == '{') {
+	if (token.type == '(' || token.type == '[' || token.type == '{') {
 		KhTokenType terminator;
 		_consume(self);
 
-		switch ((int) token->type) {
+		switch ((int) token.type) {
 			case '(':
 				terminator = ')';
 				new_value = _parse_closed_list(self, terminator, err);
@@ -382,11 +381,11 @@ static KhValue* _parse_value(KhParserContext *self, GError **err) {
 			_REQUIRE(_read(self, &token, err));
 			EXPECT(terminator);
 		}
-	} else if (token->type == T_NUMBER) {
+	} else if (token.type == T_NUMBER) {
 		new_value = _parse_number(self, err);
-	} else if (token->type == T_STRING) {
+	} else if (token.type == T_STRING) {
 		new_value = _parse_string(self, err);
-	} else if (token->type == T_IDENTIFIER) {
+	} else if (token.type == T_IDENTIFIER) {
 		new_value = _parse_identifier(self, err);
 	}
 
@@ -401,7 +400,7 @@ static KhValue* _parse(KhParserContext *self, GError **err) {
 	KhValue* result = _parse_open_list(self, T_EOF, err);
 
 	if (result) {
-		KhToken *token;
+		KhToken token = KH_TOKEN_EMPTY;
 		_REQUIRE(_read(self, &token, err));
 		EXPECT(T_EOF);
 	}

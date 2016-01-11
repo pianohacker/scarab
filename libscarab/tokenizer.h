@@ -24,6 +24,9 @@
 #include <stdio.h>
 
 //> Types
+
+#define KH_TOKENIZER_SPECIAL_PUNCT ",'{}()[]\n"
+
 /**
  * KhTokenType:
  * @T_EOF: A virtual token at the end of the input.*
@@ -33,19 +36,24 @@
  * @T_STRING: A string.
  *
  * * These token types have no value, and their #KhToken.val field is undefined.
+ *
+ * @T_MIN_TOKEN and @T_MAX_TOKEN are not used by the tokenizer, and are in the enum to allow
+ * procedural generation of input.
  */
 typedef enum {
 	T_EOF = EOF,
-	T_IDENTIFIER = 256,
+	T_MIN_TOKEN = 256,
+	T_IDENTIFIER,
 	T_NUMBER,
 	T_DECIMAL,
 	T_STRING,
+	T_MAX_TOKEN,
 } KhTokenType;
 
 /**
  * KhToken:
  * @type: The type of the token, either one of %KhTokenType or an ASCII character in the range
- *        0-255.
+ *        1-255.
  * @line: The line where the token occurred.
  * @col: The column where the token occurred.
  * @val: Any string contents of the token, as a %NULL-terminated string. This is undefined for any
@@ -58,7 +66,10 @@ typedef struct {
 	guint col;
 
 	char *val;
+	int val_length;
 } KhToken;
+
+#define KH_TOKEN_EMPTY (const KhToken){0};
 
 typedef struct _KhTokenizer KhTokenizer;
 
@@ -66,7 +77,7 @@ typedef struct _KhTokenizer KhTokenizer;
 extern KhTokenizer* kh_tokenizer_new(const char *filename, GError **err);
 extern KhTokenizer* kh_tokenizer_new_from_string(const char *str, GError **err);
 
-extern bool kh_tokenizer_next(KhTokenizer *self, KhToken **token, GError **err);
+extern bool kh_tokenizer_next(KhTokenizer *self, KhToken *token, GError **err);
 extern char* kh_tokenizer_get_filename(KhTokenizer *self);
 
 extern void kh_tokenizer_free(KhTokenizer *self);

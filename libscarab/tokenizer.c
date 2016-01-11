@@ -37,14 +37,12 @@
 #define FAIL_IF_ERR() if ((err != NULL) && (*err != NULL)) return false;
 
 // This is used for reading in strings of unknown length.
-#define GROW_IF_NEEDED(str, i, alloc) if (i >= alloc) { alloc = alloc * 2 + 1; str = GC_REALLOC(str, alloc); }
+// `str` and `alloc` are fairly self explanatory, but `i` is one beyond the largest index that the
+// code might need to index within the string (so i+1 for ASCII, i+5 for UTF-8). This is subtle, and
+// can get you in trouble if you're not careful.
+#define GROW_IF_NEEDED(str, i, alloc) if (i >= alloc) { alloc = alloc ? (alloc * 2 + 1) : 7; str = GC_REALLOC(str, alloc); }
 
-// Finally, these are the single character tokens of Scarab's language.
-
-#define _SPECIAL_PUNCT ",'{}()[]\n"
-
-static char *TOKEN_NAMES[15] = {
-	"EOF",
+static char *TOKEN_NAMES[4] = {
 	"identifier",
 	"number",
 	"decimal",
@@ -158,11 +156,11 @@ extern char* kh_token_type_name(KhTokenType token_type) {
 
 	if (token_type == '\n') {
 		return "'\\n'";
-	} else if (0 <= token_type && token_type < 256) {
+	} else if (0 <= token_type && token_type < T_MIN_TOKEN) {
 		buffer[1] = token_type;
 		return buffer;
 	} else {
-		return TOKEN_NAMES[token_type == EOF ? 0 : (token_type - 255)];
+		return token_type == EOF ? "EOF" : TOKEN_NAMES[token_type - T_MIN_TOKEN];
 	}
 }
 
@@ -285,20 +283,17 @@ static void _consume(KhTokenizer *self) {
 
 /*
  * _maketoken:
+ * @result: (out) A %KhToken to fill in.
  * @type: A valid %KhTokenType.
  * @line: Line where the token occurred.
  * @col: Column of the start of the token.
  *
  * Returns: A newly-allocated %KhToken with the given information.
  */
-static KhToken* _maketoken(KhTokenType type, int line, int col) {
-	KhToken *result = GC_NEW(KhToken);
-
+static void _maketoken(KhToken *result, KhTokenType type, int line, int col) {
 	result->type = type;
 	result->line = line;
 	result->col = col;
-
-	return result;
 }
 
 /*
@@ -325,14 +320,14 @@ static void _set_error(GError **err, KhTokenizer *self, KhSyntaxError err_type, 
 
 //> Sub-tokenizers
 static bool _tokenize_number(KhTokenizer *self, KhToken *result, gunichar c, GError **err) {
-	int length = 7;
-	char *output = result->val = GC_MALLOC_ATOMIC(length);
+	char *output = result->val;
 
+	GROW_IF_NEEDED(output = result->val, 1, result->val_length);
 	output[0] = c;
 	int i = 1;
 
 	while (_peek(self, &c, err) && c < 256 && isdigit(c)) {
-		GROW_IF_NEEDED(output = result->val, i + 1, length);
+		GROW_IF_NEEDED(output = result->val, i + 1, result->val_length);
 
 		_consume(self);
 		output[i++] = (gunichar) c;
@@ -343,7 +338,7 @@ static bool _tokenize_number(KhTokenizer *self, KhToken *result, gunichar c, GEr
 	char *suffix = output + i;
 
 	while (_peek(self, &c, err) && c < 256 && (isalpha(c) || isdigit(c))) {
-		GROW_IF_NEEDED(output = result->val, i + 1, length);
+		GROW_IF_NEEDED(output = result->val, i + 1, result->val_length);
 
 		_consume(self);
 		output[i++] = (gunichar) c;
@@ -359,13 +354,16 @@ static bool _tokenize_number(KhTokenizer *self, KhToken *result, gunichar c, GEr
 }
 
 static bool _tokenize_identifier(KhTokenizer *self, KhToken *result, gunichar c, GError **err) {
-	int length = 7;
-	char *output = result->val = GC_MALLOC_ATOMIC(length);
+	char *output = result->val;
 
+	GROW_IF_NEEDED(output = result->val, 5, result->val_length);
 	int i = g_unichar_to_utf8(c, output);
 
-	while (_peek(self, &c, err) && !(c < 256 && strchr(_SPECIAL_PUNCT, (char) c)) && (c == '_' || c == '-' || g_unichar_isalpha(c) || g_unichar_isdigit(c) || g_unichar_ispunct(c))) {
-		GROW_IF_NEEDED(output = result->val, i + 5, length);
+	while (_peek(self, &c, err) &&
+			!(c < 256 && strchr(KH_TOKENIZER_SPECIAL_PUNCT, (char) c)) &&
+			(c == '_' || c == '-' || g_unichar_isalpha(c) || g_unichar_isdigit(c) || g_unichar_ispunct(c))
+		) {
+		GROW_IF_NEEDED(output = result->val, i + 5, result->val_length);
 
 		_consume(self);
 		i += g_unichar_to_utf8(c, output + i);
@@ -378,13 +376,12 @@ static bool _tokenize_identifier(KhTokenizer *self, KhToken *result, gunichar c,
 }
 
 static bool _tokenize_string(KhTokenizer *self, KhToken *result, GError **err) {
-	int length = 7;
 	gunichar c;
-	char *output = result->val = GC_MALLOC_ATOMIC(length);
+	char *output = result->val;
 	int i = 0;
 
 	while (_peek(self, &c, err) && c != '"' && c != EOF) {
-		GROW_IF_NEEDED(output = result->val, i, length);
+		GROW_IF_NEEDED(output = result->val, i + 5, result->val_length);
 
 		_consume(self);
 
@@ -419,13 +416,12 @@ static bool _tokenize_string(KhTokenizer *self, KhToken *result, GError **err) {
 }
 
 static bool _tokenize_backquote_string(KhTokenizer *self, KhToken *result, GError **err) {
-	int length = 7;
 	gunichar c;
-	char *output = result->val = GC_MALLOC_ATOMIC(length);
+	char *output = result->val;
 	int i = 0;
 
 	while (_peek(self, &c, err) && c != '`' && c != EOF) {
-		GROW_IF_NEEDED(output = result->val, i, length);
+		GROW_IF_NEEDED(output = result->val, i + 5, result->val_length);
 
 		_consume(self);
 
@@ -451,7 +447,7 @@ static bool _tokenize_backquote_string(KhTokenizer *self, KhToken *result, GErro
  *
  * Returns: Whether a token could be successfully read.
  */
-bool kh_tokenizer_next(KhTokenizer *self, KhToken **result, GError **err) {
+bool kh_tokenizer_next(KhTokenizer *self, KhToken *result, GError **err) {
 	gunichar c, nc;
 	int line;
 	int col;
@@ -462,26 +458,26 @@ bool kh_tokenizer_next(KhTokenizer *self, KhToken **result, GError **err) {
 	if (!_read(self, &c, err)) return false;
 
 	if (G_UNLIKELY(c == EOF)) {
-		*result = _maketoken(T_EOF, line, col);
+		_maketoken(result, T_EOF, line, col);
 		return true;
 	} else if (c == '#') {
 		_consume(self);
 		while (_peek(self, &c, err) && !(c == '\n' || c == EOF)) _consume(self);
 
-		*result = _maketoken('\n', line, col);
+		_maketoken(result, '\n', line, col);
 		return true;
 	} else if (c == '-' && _peek(self, &nc, err) && nc < 256 && isdigit(nc)) {
-		*result = _maketoken(T_NUMBER, line, col);
-		return _tokenize_number(self, *result, c, err);
-	} else if (c < 256 && strchr(_SPECIAL_PUNCT, (char) c)) {
-		*result = _maketoken(c, line, col);
+		_maketoken(result, T_NUMBER, line, col);
+		return _tokenize_number(self, result, c, err);
+	} else if (c < 256 && strchr(KH_TOKENIZER_SPECIAL_PUNCT, (char) c)) {
+		_maketoken(result, c, line, col);
 		return true;
 	} else if (c < 256 && isdigit((char) c)) {
-		*result = _maketoken(T_NUMBER, line, col);
-		return _tokenize_number(self, *result, c, err);
+		_maketoken(result, T_NUMBER, line, col);
+		return _tokenize_number(self, result, c, err);
 	} else if (c == '"') {
-		*result = _maketoken(T_STRING, line, col);
-		if (!_tokenize_string(self, *result, err)) return false;
+		_maketoken(result, T_STRING, line, col);
+		if (!_tokenize_string(self, result, err)) return false;
 
 		_REQUIRE(_read(self, &c, err));
 		if (c == '"') {
@@ -495,8 +491,8 @@ bool kh_tokenizer_next(KhTokenizer *self, KhToken **result, GError **err) {
 			return false;
 		}
 	} else if (c == '`') {
-		*result = _maketoken(T_STRING, line, col);
-		if (!_tokenize_backquote_string(self, *result, err)) return false;
+		_maketoken(result, T_STRING, line, col);
+		if (!_tokenize_backquote_string(self, result, err)) return false;
 
 		_REQUIRE(_read(self, &c, err));
 		if (c == '`') {
@@ -513,8 +509,8 @@ bool kh_tokenizer_next(KhTokenizer *self, KhToken **result, GError **err) {
 		// Do nothing
 		goto retry;
 	} else if (g_unichar_isalpha(c) || g_unichar_ispunct(c)) {
-		*result = _maketoken(T_IDENTIFIER, line, col);
-		return _tokenize_identifier(self, *result, c, err);
+		_maketoken(result, T_IDENTIFIER, line, col);
+		return _tokenize_identifier(self, result, c, err);
 	} else {
 		_set_error(err,
 			self,

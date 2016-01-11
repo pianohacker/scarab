@@ -239,7 +239,7 @@ bool _equal_methods(const KhMethod *method_a, const KhMethod *method_b) {
 }
 
 void kh_add_method(KhContext *ctx, KhRecordType *type, const char *name, KhFunc *func) {
-	KhMethod *method = g_new0(KhMethod);
+	KhMethod *method = g_new0(KhMethod, 1);
 	method->type = type;
 	method->name = g_strdup(name);
 	g_hash_table_insert(ctx->methods, method, func);
