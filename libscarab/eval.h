@@ -31,6 +31,8 @@ KhFunc* kh_func_new(const gchar *name, KhValue *form, long min_argc, long max_ar
 KhFunc* kh_func_new_c(const gchar *name, KhCFunc c_func, long min_argc, long max_argc, bool is_direct);
 const gchar* kh_func_get_name(KhFunc *func);
 
+void kh_method_add(KhContext *ctx, KhRecordType *type, const char *name, KhFunc *func);
+
 KhValue* kh_eval(KhContext *ctx, KhValue *form);
 KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv);
 KhValue* kh_apply_values(KhContext *ctx, KhFunc *func, ...);

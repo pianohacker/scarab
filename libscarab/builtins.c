@@ -94,7 +94,7 @@ static KhValue* set(KhContext *ctx, long argc, KhValue **argv) {
 //
 // Defines a new function and adds it to the symbol table. Takes the name of the function, a list of
 // names and a list of forms that are the body of the function:
-//    
+//
 //     def foobar (a b c) {print foo, [1 + 1]}
 //
 // Where the value of the last form in the body is the return value of the function.
@@ -113,6 +113,21 @@ static KhValue* def_direct(KhContext *ctx, long argc, KhValue **argv) {
 
 	return kh_nil;
 }
+/*
+// ## `def` - defines functions
+//
+// Defines a new function and adds it to the symbol table. Takes the name of the function, a list of
+// names and a list of forms that are the body of the function:
+//
+//     def foobar (a b c) {print foo, [1 + 1]}
+//
+// Where the value of the last form in the body is the return value of the function.
+static KhValue* def_method(KhContext *ctx, long argc, KhValue **argv) {
+	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, _create_func(ctx, argv[0]->d_str, argv[1], argv[2], false));
+
+	return kh_nil;
+}
+*/
 
 // ## `eval` - evaluate forms
 //

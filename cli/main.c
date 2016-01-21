@@ -13,6 +13,7 @@ int main(int argc, char **argv) {
 	// Start up the execution context, where the root scope and other information specific to this
 	// interpreter lives.
 	KhContext *ctx = kh_context_new();
+	printf("%d\n", offsetof(KhValue, d_str));
 
 	// ## File execution
 	// Check for a filename as the first argument.
