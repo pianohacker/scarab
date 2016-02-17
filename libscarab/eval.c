@@ -72,13 +72,15 @@ struct _KhContext {
 // passed to the function. This is similar to upvars in Tcl, and is our current cheap replacement
 // for macros.
 struct _KhFunc {
+	KhValue base;
+
 	const gchar *name;
 
 	KhValue *form;
 	KhScope *scope;
 	long min_argc;
 	long max_argc;
-	char **argnames;
+	const char **argnames;
 
 	KhCFunc c_func;
 
@@ -105,12 +107,12 @@ KhScope* kh_scope_new(KhScope *parent) {
 	return scope;
 }
 
-void kh_scope_add(KhScope *scope, char *name, KhValue *val) {
+void kh_scope_add(KhScope *scope, const char *name, KhValue *val) {
 	// This cast is okay, as the interned string is guaranteed to continue to exist.
 	g_hash_table_replace(scope->table, (gchar*) g_intern_string(name), val);
 }
 
-KhValue* kh_scope_lookup(KhScope *scope, char *name) {
+KhValue* kh_scope_lookup(KhScope *scope, const char *name) {
 	for (; scope != NULL; scope = scope->parent) {
 		KhValue *value = g_hash_table_lookup(scope->table, name);
 		if (value) return value;
@@ -133,7 +135,7 @@ KhContext* kh_context_new() {
 	// This is the singleton logic for the builtins scope (and a few other small details).
 	if (!core_init_done) {
 		// For instance, we only need one nil (and this way, we can compare it pointerwise).
-		kh_nil = kh_new(KH_NIL);
+		kh_nil = kh_nil_new();
 
 		_builtins_scope = kh_scope_new(NULL);
 		_register_builtins(_builtins_scope);
@@ -188,8 +190,9 @@ KhValue* kh_get_error(KhContext *ctx) {
 
 // # Functions
 
-KhFunc* kh_func_new(const gchar *name, KhValue *form, long min_argc, long max_argc, char **argnames, KhScope *scope, bool is_direct) {
-	KhFunc *result = GC_NEW(KhFunc);
+KhValue* kh_func_new(const gchar *name, KhValue *form, long min_argc, long max_argc, const char **argnames, KhScope *scope, bool is_direct) {
+	KhFunc *result = _KH_NEW_BASIC(KH_FUNC_TYPE, KhFunc);
+
 	result->name = g_strdup(name);
 	result->form = form;
 	result->min_argc = min_argc;
@@ -198,27 +201,29 @@ KhFunc* kh_func_new(const gchar *name, KhValue *form, long min_argc, long max_ar
 	result->scope = scope;
 	result->is_direct = is_direct;
 
-	return result;
+	return (KhValue*) result;
 }
 
-KhFunc* kh_func_new_c(const gchar *name, KhCFunc c_func, long min_argc, long max_argc, bool is_direct) {
-	KhFunc *result = GC_NEW(KhFunc);
+KhValue* kh_func_new_c(const gchar *name, KhCFunc c_func, long min_argc, long max_argc, bool is_direct) {
+	KhFunc *result = _KH_NEW_BASIC(KH_FUNC_TYPE, KhFunc);
+
 	result->name = g_strdup(name);
 	result->c_func = c_func;
 	result->min_argc = min_argc;
 	result->max_argc = max_argc;
 	result->is_direct = is_direct;
 
-	return result;
+	return (KhValue*) result;
 }
 
-const gchar* kh_func_get_name(KhFunc *func) {
+const gchar* kh_func_get_name(const KhFunc *func) {
 	return func->name;
 }
 
 // # Methods
 
-void kh_method_add(KhContext *ctx, KhRecordType *type, const char *name, KhFunc *func) {
+void kh_method_add(KhContext *ctx, KhValue *type, const char *name, KhFunc *func) {
+	assert(KH_IS_TYPE(type));
 	GHashTable *type_methods = g_hash_table_lookup(ctx->method_tables, type);
 
 	if (type_methods == NULL) {
@@ -229,7 +234,8 @@ void kh_method_add(KhContext *ctx, KhRecordType *type, const char *name, KhFunc 
 	g_hash_table_insert(type_methods, g_strdup, func);
 }
 
-KhFunc* kh_method_lookup(KhContext *ctx, KhRecordType *type, const char *name) {
+KhFunc* kh_method_lookup(KhContext *ctx, KhValue *type, const char *name) {
+	assert(KH_IS_TYPE(type));
 	GHashTable *type_methods = g_hash_table_lookup(ctx->method_tables, type);
 
 	if (type_methods == NULL) return NULL;
@@ -241,18 +247,16 @@ KhFunc* kh_method_lookup(KhContext *ctx, KhRecordType *type, const char *name) {
 
 // First, a small utility function to decide if a value is an atom:
 bool kh_is_atom(KhValue *value) {
-	switch (value->type) {
-		case KH_NIL:
-		case KH_INT:
-		case KH_STRING:
-		case KH_FUNC:
-		case KH_RECORD_TYPE:
-		case KH_RECORD:
-		case KH_QUOTED:
+	switch (KH_BASIC_TYPE(value->type)) {
+		case KH_NIL_TYPE:
+		case KH_INT_TYPE:
+		case KH_STRING_TYPE:
+		case KH_FUNC_TYPE:
+		case KH_RECORD_TYPE_TYPE:
 			return true;
 
 		default:
-			return false;
+			return KH_IS_RECORD(value);
 	}
 }
 
@@ -262,39 +266,25 @@ KhValue* kh_eval(KhContext *ctx, KhValue *form) {
 	KhValue *value;
 
 	// ## Atomic values
+	if (kh_is_atom(form)) return form;
 
-	switch (form->type) {
-		// All of the below atomic types evaluate to themselves.
-		case KH_NIL:
-		case KH_INT:
-		case KH_STRING:
-		case KH_FUNC:
-		case KH_RECORD_TYPE:
-		case KH_RECORD:
-			return form;
-
+	if (KH_IS_SYMBOL(form)) {
 		// Evaluating a symbol will look it up in the current and all containing scopes, returning
 		// an error if it does not exist.
-		case KH_SYMBOL:
-			value = kh_scope_lookup(ctx->scope, form->d_str);
+		value = kh_scope_lookup(ctx->scope, KH_SYMBOL(form)->value);
 
-			if (value == NULL) KH_FAIL(undefined-variable, "%s", form->d_str);
+		if (value == NULL) KH_FAIL(undefined-variable, "%s", KH_SYMBOL(form)->value);
 
-			return value;
-
+		return value;
+	} else if (KH_IS_QUOTED(form)) {
 		// This is a value with a preceding `'`, which should be treated as if it were atomic.
-		case KH_QUOTED:
-			return form->d_quoted;
-
-		// Finally, if we get an actual form, we get to the interesting bit.
-		case KH_CELL:
-			break;
+		return KH_QUOTED(form)->value;
 	}
 
-	// # Forms
+	// ## Forms
 	//
 	// First, we have to evaluate the first item in the form to figure out what we're calling.
-	KhValue *head = kh_eval(ctx, form->d_left);
+	KhValue *head = kh_eval(ctx, KH_CELL(form)->left);
 	_REQUIRE(head);
 
 	// If the result of that evaluation wasn't a function, we either:
@@ -318,11 +308,12 @@ KhValue* kh_eval(KhContext *ctx, KhValue *form) {
 	KhValue *argv[argc];
 
 	int i = 0;
-	KH_ITERATE(form->d_right) argv[i++] = elem->d_left;
+	KH_ITERATE(KH_CELL(form)->right) argv[i++] = elem;
 
-	return kh_apply(ctx, head->d_func, argc, argv);
+	return kh_apply(ctx, KH_FUNC(head), argc, argv);
 }
 
+// ## Function application
 KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv) {
 	// If this is not a direct function, we have to get the value of each of the arguments.
 	if (!func->is_direct) {

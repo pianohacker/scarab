@@ -16,6 +16,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
+#include <assert.h>
 #include <gc.h>
 #include <glib.h>
 #include <stdbool.h>
@@ -35,118 +36,95 @@ static char *_value_type_names[] = {
 	"func",
 	"quoted",
 	"record-type",
-	"record",
 };
 
-const char *kh_value_type_name(KhValueType type) {
-	return _value_type_names[type];
-}
+/*const char *kh_value_type_name(KhValueType type) {*/
+	/*return _value_type_names[type];*/
+/*}*/
 
 KhValue* kh_nil = NULL;
 
-KhValue* kh_new(KhValueType type) {
-	KhValue *value = GC_NEW(KhValue);
-	value->type = type;
+KhValue* kh_nil_new() {
+	assert(kh_nil == NULL);
 
-	return value;
+	return _KH_NEW_BASIC(KH_NIL_TYPE, KhValue);
 }
 
-KhValue* kh_new_string_take(char *val) {
-	KhValue *value = kh_new(KH_STRING);
-	value->d_str = val;
+KhValue* kh_string_new_take(char *val) {
+	KhString *str = _KH_NEW_BASIC(KH_STRING_TYPE, KhString);
+	str->value = val;
 
-	return value;
+	return (KhValue *) str;
 }
 
-KhValue* kh_new_string(const char *val) {
-	return kh_new_string_take(GC_STRDUP(val));
+KhValue* kh_string_new(const char *val) {
+	return kh_string_new_take(GC_STRDUP(val));
 }
 
-KhValue* kh_new_int(long val) {
-	KhValue *value = kh_new(KH_INT);
-	value->d_int = val;
+KhValue* kh_int_new(long val) {
+	KhInt *int_ = _KH_NEW_BASIC(KH_INT_TYPE, KhInt);
+	int_->value = val;
 
-	return value;
+	return (KhValue *) int_;
 }
 
-KhValue* kh_new_cell(KhValue *left, KhValue *right) {
-	KhValue *value = kh_new(KH_CELL);
-	value->d_left = left;
-	value->d_right = right;
+KhValue* kh_cell_new(KhValue *left, KhValue *right) {
+	KhCell *cell = _KH_NEW_BASIC(KH_CELL_TYPE, KhCell);
+	cell->left = left;
+	cell->right = right;
 
-	return value;
+	return (KhValue *) cell;
 }
 
-KhValue* kh_new_symbol(const char *val) {
-	KhValue *value = kh_new(KH_SYMBOL);
-	value->d_str = (char *) g_intern_string(val);
+KhValue* kh_symbol_new(const char *val) {
+	KhSymbol *symbol = _KH_NEW_BASIC(KH_SYMBOL_TYPE, KhSymbol);
+	symbol->value = (char *) g_intern_string(val);
 
-	return value;
+	return (KhValue *) symbol;
 }
 
-KhValue* kh_new_func(KhFunc *val) {
-	KhValue *value = kh_new(KH_FUNC);
-	value->d_func = val;
+KhValue* kh_quoted_new(KhValue *val) {
+	KhQuoted *quoted = _KH_NEW_BASIC(KH_QUOTED_TYPE, KhQuoted);
+	quoted->value = val;
 
-	return value;
-}
-
-KhValue* kh_new_quoted(KhValue *val) {
-	KhValue *value = kh_new(KH_QUOTED);
-	value->d_quoted = val;
-
-	return value;
-}
-
-KhValue* kh_new_record_type(KhRecordType *type) {
-	KhValue *value = kh_new(KH_RECORD_TYPE);
-	value->d_record_type = type;
-
-	return value;
-}
-
-KhValue* kh_new_record(KhRecord *record) {
-	KhValue *value = kh_new(KH_RECORD);
-	value->d_record = record;
-
-	return value;
+	return (KhValue *) quoted;
 }
 
 // For _inspect_cell
 static void _inspect(const KhValue *value, GString *result);
 
-static void _inspect_int(const KhValue *value, GString *result) {
-	g_string_append_printf(result, "%ld", value->d_int);
+static void _inspect_int(const KhInt *int_, GString *result) {
+	g_string_append_printf(result, "%ld", int_->value);
 }
 
-static void _inspect_string(const KhValue *value, GString *result) {
-	char *repr = g_strescape(value->d_str, "");
+static void _inspect_string(const KhString *string, GString *result) {
+	char *repr = g_strescape(string->value, "");
 	g_string_append_c(result, '"');
 	g_string_append(result, repr);
 	g_string_append_c(result, '"');
 	g_free(repr);
 }
 
-static void _inspect_cell(const KhValue *value, GString *result, bool in_cell) {
+static void _inspect_cell(const KhCell *cell, GString *result, bool in_cell) {
 	if (!in_cell) g_string_append_c(result, '(');
 
-	if (value->d_right->type == KH_CELL) {
-		_inspect(value->d_left, result);
+	if (KH_IS_CELL(cell->right)) {
+		_inspect(cell->left, result);
 		g_string_append_c(result, ' ');
-		_inspect_cell(value->d_right, result, true);
-	} else if (value->d_right->type == KH_NIL) {
-		_inspect(value->d_left, result);
+		_inspect_cell(KH_CELL(cell->right), result, true);
+	} else if (cell->right == kh_nil) {
+		_inspect(cell->left, result);
 	} else {
-		_inspect(value->d_left, result);
+		_inspect(cell->left, result);
 		g_string_append(result, " . ");
-		_inspect(value->d_left, result);
+		_inspect(cell->right, result);
 	}
 
 	if (!in_cell) g_string_append_c(result, ')');
 }
 
-static void _inspect_func(const KhValue *value, GString *result) {
-	g_string_append_printf(result, "*function \"%s\"*", kh_func_get_name(value->d_func));
+static void _inspect_func(const KhFunc *func, GString *result) {
+	g_string_append_printf(result, "*function \"%s\"*", kh_func_get_name(func));
 }
 
 static bool _inspect_record_pair_cb(const char *key, const KhValue *value, void *userdata) {
@@ -161,38 +139,39 @@ static bool _inspect_record_pair_cb(const char *key, const KhValue *value, void 
 }
 
 static void _inspect(const KhValue *value, GString *result) {
-	switch (value->type) {
-		case KH_NIL:
-			g_string_append(result, "nil");
-			break;
-		case KH_INT:
-			_inspect_int(value, result);
-			break;
-		case KH_STRING:
-			_inspect_string(value, result);
-			break;
-		case KH_CELL:
-			_inspect_cell(value, result, false);
-			break;
-		case KH_SYMBOL:
-			g_string_append(result, value->d_str);
-			break;
-		case KH_FUNC:
-			_inspect_func(value, result);
-			break;
-		case KH_QUOTED:
-			g_string_append(result, "(quote ");
-			_inspect(value->d_quoted, result);
-			g_string_append_c(result, ')');
-			break;
-		case KH_RECORD_TYPE:
-			g_string_append(result, "*record-type*");
-			break;
-		case KH_RECORD:
-			g_string_append(result, "(*record");
-			kh_record_foreach(value->d_record, _inspect_record_pair_cb, result);
-			g_string_append_c(result, ')');
-			break;
+	if (KH_IS_BASIC(value)) {
+		switch (KH_BASIC_TYPE(value->type)) {
+			case KH_NIL_TYPE:
+				g_string_append(result, "nil");
+				break;
+			case KH_INT_TYPE:
+				_inspect_int(KH_INT(value), result);
+				break;
+			case KH_STRING_TYPE:
+				_inspect_string(KH_STRING(value), result);
+				break;
+			case KH_CELL_TYPE:
+				_inspect_cell(KH_CELL(value), result, false);
+				break;
+			case KH_SYMBOL_TYPE:
+				g_string_append(result, KH_SYMBOL(value)->value);
+				break;
+			case KH_FUNC_TYPE:
+				_inspect_func(KH_FUNC(value), result);
+				break;
+			case KH_QUOTED_TYPE:
+				g_string_append(result, "(quote ");
+				_inspect(KH_QUOTED(value)->value, result);
+				g_string_append_c(result, ')');
+				break;
+			case KH_RECORD_TYPE_TYPE:
+				g_string_append(result, "*record-type*");
+				break;
+		}
+	} else if (KH_IS_RECORD(value)) {
+		g_string_append(result, "(*record");
+		kh_record_foreach(KH_RECORD(value), _inspect_record_pair_cb, result);
+		g_string_append_c(result, ')');
 	}
 }
 

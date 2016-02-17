@@ -13,7 +13,6 @@ int main(int argc, char **argv) {
 	// Start up the execution context, where the root scope and other information specific to this
 	// interpreter lives.
 	KhContext *ctx = kh_context_new();
-	printf("%d\n", offsetof(KhValue, d_str));
 
 	// ## File execution
 	// Check for a filename as the first argument.
@@ -28,7 +27,7 @@ int main(int argc, char **argv) {
 		}
 
 		KH_ITERATE(forms) {
-			KhValue *value = kh_eval(ctx, elem->d_left);
+			KhValue *value = kh_eval(ctx, elem);
 
 			if (value == NULL) {
 				fprintf(stderr, "Error: %s\n", kh_inspect(kh_get_error(ctx)));
@@ -59,14 +58,14 @@ int main(int argc, char **argv) {
 
 		// Only print a number before each result if there is more than one result.
 		bool print_number = true;
-		if (forms->d_right == kh_nil) {
+		if (KH_CELL(forms)->right == kh_nil) {
 			print_number = false;
 		}
 
 		// Finally, run each form, checking for errors, and print out the result.
 		int i = 1;
 		KH_ITERATE(forms) {
-			KhValue *value = kh_eval(ctx, elem->d_left);
+			KhValue *value = kh_eval(ctx, elem);
 
 			if (value == NULL) {
 				printf("Error: %s\n", kh_inspect(kh_get_error(ctx)));

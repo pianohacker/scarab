@@ -34,14 +34,14 @@ long kh_list_length(KhValue *list) {
 }
 
 KhValue* kh_list_append(KhValue *list, KhValue *value) {
-	KhValue *new_tail = kh_new_cell(value, kh_nil);
+	KhValue *new_tail = kh_cell_new(value, kh_nil);
 	if (KH_IS_CELL(list)) {
-		KhValue *tail = list;
+		KhCell *tail = KH_CELL(list);
 
 		// Iterate while we have valid cells.
-		while (KH_IS_CELL(tail->d_right)) tail = tail->d_right;
+		while (KH_IS_CELL(tail->right)) tail = KH_CELL(tail->right);
 		
-		tail->d_right = new_tail;
+		tail->right = new_tail;
 
 		return list;
 	} else if (KH_IS_NIL(list)) {
@@ -55,7 +55,7 @@ KhValue* kh_list_append(KhValue *list, KhValue *value) {
 
 KhValue* kh_list_prepend(KhValue *list, KhValue *value) {
 	if (KH_IS_CELL(list) || KH_IS_NIL(list)) {
-		return kh_new_cell(value, list);
+		return kh_cell_new(value, (KhValue*) list);
 	} else {
 		puts("WTF"); abort();
 	}

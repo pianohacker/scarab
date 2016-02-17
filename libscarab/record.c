@@ -31,13 +31,15 @@
 // A record type holds all the defined keys for that type and any other bookkeeping information.
 
 struct _KhRecordType {
+	KhValue base;
+
 	int num_keys;
-	char **keys;
+	const char **keys;
 };
 
 // We expect the array of strings to be `NULL`-terminated.
-KhRecordType* kh_record_type_new(char* const *keys) {
-	KhRecordType *type = GC_NEW(KhRecordType);
+KhValue* kh_record_type_new(const char **keys) {
+	KhRecordType *type = _KH_NEW_BASIC(KH_RECORD_TYPE_TYPE, KhRecordType);
 
 	int num_keys = 0;
 	while (keys[num_keys]) num_keys++;
@@ -49,7 +51,7 @@ KhRecordType* kh_record_type_new(char* const *keys) {
 		type->keys[i] = GC_STRDUP(keys[i]);
 	}
 
-	return type;
+	return (KhValue*) type;
 }
 
 long kh_record_type_get_num_keys(const KhRecordType *type) {
@@ -62,14 +64,14 @@ long kh_record_type_get_num_keys(const KhRecordType *type) {
 // keys.
 
 struct _KhRecord {
-	const KhRecordType *type;
-	KhValue **values;
+	KhValue base;
+
+	KhValue *values[0];
 };
 
-KhRecord* kh_record_new(const KhRecordType *type, char* const *keys, KhValue* const *values) {
-	KhRecord *record = GC_NEW(KhRecord);
-	record->type = type;
-	record->values = GC_MALLOC(sizeof(KhValue*) * type->num_keys);
+KhValue* kh_record_new(const KhRecordType *type, const char **keys, KhValue* const *values) {
+	KhRecord *record = GC_MALLOC(sizeof(KhRecord) + type->num_keys * sizeof(KhValue*));
+	((KhValue*) record)->type = (KhValue*) type;
 
 	int num_keys = 0;
 	while (keys[num_keys]) num_keys++;
@@ -89,13 +91,12 @@ KhRecord* kh_record_new(const KhRecordType *type, char* const *keys, KhValue* co
 		if (j == num_keys) record->values[i] = kh_nil;
 	}
 
-	return record;
+	return (KhValue*) record;
 }
 
-KhRecord* kh_record_new_from_values(const KhRecordType *type, KhValue* const *values) {
-	KhRecord *record = GC_NEW(KhRecord);
-	record->type = type;
-	record->values = GC_MALLOC(sizeof(KhValue*) * type->num_keys);
+KhValue* kh_record_new_from_values(const KhRecordType *type, KhValue* const *values) {
+	KhRecord *record = GC_MALLOC(sizeof(KhRecord) + type->num_keys * sizeof(KhValue*));
+	((KhValue*) record)->type = (KhValue*) type;
 
 	// We copy in all the values we got, and set any stragglers to nil.
 	int i;
@@ -103,17 +104,17 @@ KhRecord* kh_record_new_from_values(const KhRecordType *type, KhValue* const *va
 	for (i = 0; values[i] && i < type->num_keys; i++) record->values[i] = values[i];
 	for (; i < type->num_keys; i++) record->values[i] = kh_nil;
 
-	return record;
+	return (KhValue*) record;
 }
 
 const KhRecordType* kh_record_get_type(const KhRecord *record) {
-	return record->type;
+	return (KhRecordType*) KH_VALUE_TYPE(record);
 }
 
 // Both setting and getting values in records work basically the same way; the key is searched for
 // in the record type's key list, and the matching value is set/returned.
 bool kh_record_set(KhRecord *record, const char *key, KhValue *value) {
-	const KhRecordType *type = record->type;
+	const KhRecordType *type = (KhRecordType*) KH_VALUE_TYPE(record);
 
 	for (int i = 0; i < type->num_keys; i++) {
 		if (strcmp(type->keys[i], key) == 0) {
@@ -126,7 +127,7 @@ bool kh_record_set(KhRecord *record, const char *key, KhValue *value) {
 }
 
 KhValue* kh_record_get(const KhRecord *record, const char *key) {
-	const KhRecordType *type = record->type;
+	const KhRecordType *type = (KhRecordType*) KH_VALUE_TYPE(record);
 
 	for (int i = 0; i < type->num_keys; i++) {
 		if (strcmp(type->keys[i], key) == 0) {
@@ -138,7 +139,7 @@ KhValue* kh_record_get(const KhRecord *record, const char *key) {
 }
 
 bool kh_record_foreach(const KhRecord *record, bool (*callback)(const char*, const KhValue*, void*), void *userdata) {
-	const KhRecordType *type = record->type;
+	const KhRecordType *type = kh_record_get_type(record);
 
 	for (int i = 0; i < type->num_keys; i++) {
 		if (!callback(type->keys[i], record->values[i], userdata)) return false;

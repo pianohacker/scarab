@@ -33,16 +33,16 @@
 
 // # Utility functions
 
-// This parses a list of strings into a C array of strings.
+// This parses a list of symbols into a C array of strings.
 //
 // It both returns the length and NULL-terminates the array to allow for different argument passing
 // strategies.
-static long _extract_string_list(KhValue *str_list, char ***strings) {
+static long _extract_symbol_list(KhValue *str_list, const char ***strings) {
 	long length = kh_list_length(str_list);
 	*strings = GC_MALLOC(sizeof(char*) * (length + 1));
 
 	long i = 0;
-	KH_ITERATE(str_list) (*strings)[i++] = elem->d_left->d_str;
+	KH_ITERATE(str_list) (*strings)[i++] = KH_SYMBOL(elem)->value;
 	(*strings)[i++] = NULL;
 
 	return length;
@@ -50,12 +50,12 @@ static long _extract_string_list(KhValue *str_list, char ***strings) {
 
 // In order to create a function from its argument list and underlying form, we have to:
 static KhValue* _create_func(KhContext *ctx, const gchar *name, KhValue *arg_desc, KhValue *form, bool is_direct) {
-	char **func_argnames;
+	const char **func_argnames;
 	// First, parse the argument names into a more palatable form.
-	long func_argc = _extract_string_list(arg_desc, &func_argnames);
+	long func_argc = _extract_symbol_list(arg_desc, &func_argnames);
 
 	// Then, we have to create a function definition and a value to wrap that function.
-	return kh_new_func(kh_func_new(name, form, func_argc, func_argc, func_argnames, kh_context_get_scope(ctx), is_direct));
+	return kh_func_new(name, form, func_argc, func_argc, func_argnames, kh_context_get_scope(ctx), is_direct);
 }
 
 // # Builtin definitions
@@ -66,17 +66,17 @@ static KhValue* add(KhContext *ctx, long argc, KhValue **argv) {
 	int result = 0;
 
 	for (int i = 0; i < argc; i++) {
-		result += argv[i]->d_int;
+		result += KH_INT(argv[i])->value;
 	}
 
-	return kh_new_int(result);
+	return kh_int_new(result);
 }
 
 // ## `atom?` - true if the argument is an atom
 //
 // That is, a simple value that returns itself when evaluated.
 static KhValue* atom(KhContext *ctx, long argc, KhValue **argv) {
-	return kh_is_atom(argv[0]) ? kh_new_int(1) : kh_nil;
+	return kh_is_atom(argv[0]) ? kh_int_new(1) : kh_nil;
 }
 
 // ## `=` - set values in the current scope
@@ -85,7 +85,7 @@ static KhValue* atom(KhContext *ctx, long argc, KhValue **argv) {
 static KhValue* set(KhContext *ctx, long argc, KhValue **argv) {
 	KhValue *value = kh_eval(ctx, argv[1]);
 	_REQUIRE(value);
-	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, value);
+	kh_scope_add(kh_context_get_scope(ctx), KH_SYMBOL(argv[0])->value, value);
 
 	return kh_nil;
 }
@@ -99,7 +99,7 @@ static KhValue* set(KhContext *ctx, long argc, KhValue **argv) {
 //
 // Where the value of the last form in the body is the return value of the function.
 static KhValue* def(KhContext *ctx, long argc, KhValue **argv) {
-	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, _create_func(ctx, argv[0]->d_str, argv[1], argv[2], false));
+	kh_scope_add(kh_context_get_scope(ctx), KH_SYMBOL(argv[0])->value, _create_func(ctx, KH_SYMBOL(argv[0])->value, argv[1], argv[2], false));
 
 	return kh_nil;
 }
@@ -109,7 +109,7 @@ static KhValue* def(KhContext *ctx, long argc, KhValue **argv) {
 // As above, but defines a direct function (where the arguments to the function are not evaluated
 // before being passed).
 static KhValue* def_direct(KhContext *ctx, long argc, KhValue **argv) {
-	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, _create_func(ctx, argv[0]->d_str, argv[1], argv[2], true));
+	kh_scope_add(kh_context_get_scope(ctx), KH_SYMBOL(argv[0])->value, _create_func(ctx, KH_SYMBOL(argv[0])->value, argv[1], argv[2], true));
 
 	return kh_nil;
 }
@@ -140,7 +140,7 @@ static KhValue* eval(KhContext *ctx, long argc, KhValue **argv) {
 //
 // Like `car`, returns the first element of a list.
 static KhValue* first(KhContext *ctx, long argc, KhValue **argv) {
-	return argv[0]->d_left;
+	return KH_CELL(argv[0])->left;
 }
 
 // ## `get-key` - gets a key from a record
@@ -151,8 +151,8 @@ static KhValue* get_key(KhContext *ctx, long argc, KhValue **argv) {
 	KhValue *record_value = kh_eval(ctx, argv[0]);
 	_REQUIRE(record_value);
 
-	KhValue *value = kh_record_get(record_value->d_record, argv[1]->d_str);
-	KH_FAIL_UNLESS(value, unknown-key, "No such key %s in record", argv[1]->d_str);
+	KhValue *value = kh_record_get(KH_RECORD(record_value), KH_STRING(argv[1])->value);
+	KH_FAIL_UNLESS(value, unknown-key, "No such key %s in record", KH_STRING(argv[1])->value);
 
 	return value;
 }
@@ -162,7 +162,7 @@ static KhValue* get_key(KhContext *ctx, long argc, KhValue **argv) {
 // This will return a string describing the contents of the given value. This may not be directly
 // parsable, as it is intended for human consumption.
 static KhValue* inspect(KhContext *ctx, long argc, KhValue **argv) {
-	return kh_new_string_take(kh_inspect(argv[0]));
+	return kh_string_new_take(kh_inspect(argv[0]));
 }
 
 // ## `lambda` - define an inline function
@@ -184,7 +184,7 @@ static KhValue* let(KhContext *ctx, long argc, KhValue **argv) {
 	KhScope *let_scope = kh_context_new_scope(ctx);
 
 	KH_ITERATE(argv[0]) {
-		kh_scope_add(let_scope, elem->d_left->d_left->d_str, kh_eval(ctx, elem->d_left->d_right->d_left));
+		kh_scope_add(let_scope, KH_STRING(KH_CELL(elem)->left)->value, kh_eval(ctx, KH_CELL(KH_CELL(elem)->right)->left));
 	}
 
 	kh_context_set_scope(ctx, let_scope);
@@ -200,7 +200,7 @@ static KhValue* let(KhContext *ctx, long argc, KhValue **argv) {
 // Creates a new record of the given type. The correct number of values must be provided in the same
 // order as the original record type.
 static KhValue* make(KhContext *ctx, long argc, KhValue **argv) {
-	const KhRecordType *type = argv[0]->d_record_type;
+	const KhRecordType *type = KH_RECORD_TYPE(argv[0]);
 	long num_keys = kh_record_type_get_num_keys(type);
 	long num_provided = argc - 1;
 	if (num_provided != num_keys) {
@@ -213,7 +213,7 @@ static KhValue* make(KhContext *ctx, long argc, KhValue **argv) {
 	}
 	values[num_keys] = NULL;
 
-	return kh_new_record(kh_record_new_from_values(type, values));
+	return kh_record_new_from_values(type, values);
 }
 
 // ## `print` - prints values to the console
@@ -242,24 +242,23 @@ static KhValue* quote(KhContext *ctx, long argc, KhValue **argv) {
 //
 // Creates a new record type with the given name and list of members.
 static KhValue* record_type(KhContext *ctx, long argc, KhValue **argv) {
-	char **members;
-	_extract_string_list(argv[1], &members);
+	const char **members;
+	_extract_symbol_list(argv[1], &members);
 
-	KhRecordType *type = kh_record_type_new(members);
-	KhValue *type_value = kh_new_record_type(type);
-	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, type_value);
+	KhValue *type = kh_record_type_new(members);
+	kh_scope_add(kh_context_get_scope(ctx), KH_SYMBOL(argv[0])->value, type);
 
-	return type_value;
+	return type;
 }
 
 // ## `rest` - returns all but the first element of a list
 //
 // Like `cdr`, returns all but the first element of a list.
 static KhValue* rest(KhContext *ctx, long argc, KhValue **argv) {
-	return argv[0]->d_right;
+	return KH_CELL(argv[0])->right;
 }
 
-#define _REG_VARARGS(name, func, min_argc, max_argc, is_direct) kh_scope_add(_builtins_scope, name, kh_new_func(kh_func_new_c(#name, func, min_argc, max_argc, is_direct)));
+#define _REG_VARARGS(name, func, min_argc, max_argc, is_direct) kh_scope_add(_builtins_scope, name, kh_func_new_c(#name, func, min_argc, max_argc, is_direct));
 #define _REG(name, func, argc, is_direct) _REG_VARARGS(name, func, argc, argc, is_direct)
 
 void _register_builtins(KhScope *_builtins_scope) {

@@ -172,7 +172,7 @@ static KhValue* _parse_number(KhParserContext *self, GError **err) {
 		return NULL;
 	}
 
-	KhValue *result = kh_new_int(value);
+	KhValue *result = kh_int_new(value);
 
 	return result;
 }
@@ -181,7 +181,7 @@ static KhValue* _parse_string(KhParserContext *self, GError **err) {
 	KhToken token = KH_TOKEN_EMPTY;
 	_REQUIRE(_read(self, &token, err));
 
-	KhValue *result = kh_new_string(token.val);
+	KhValue *result = kh_string_new(token.val);
 
 	return result;
 }
@@ -195,7 +195,7 @@ static KhValue* _parse_identifier(KhParserContext *self, GError **err) {
 	if (strcmp(token.val, "nil") == 0) {
 		result = kh_nil;
 	} else {
-		result = kh_new_symbol(token.val);
+		result = kh_symbol_new(token.val);
 	}
 
 	return result;
@@ -249,7 +249,7 @@ static KhValue* _parse_operator_list(KhParserContext *self, KhTokenType terminat
 		if (operator) {
 			_consume(self);
 
-			if (strcmp(operator->d_str, token.val) != 0) {
+			if (strcmp(((KhSymbol*) operator)->value, token.val) != 0) {
 				_error(
 					self,
 					token,
@@ -390,7 +390,7 @@ static KhValue* _parse_value(KhParserContext *self, GError **err) {
 	}
 
 	if (quote_value && new_value) {
-		return kh_new_quoted(new_value);
+		return kh_quoted_new(new_value);
 	}
 
 	return new_value;
