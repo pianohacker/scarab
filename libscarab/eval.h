@@ -33,6 +33,7 @@ KhValue* kh_func_new_c(const gchar *name, KhCFunc c_func, long min_argc, long ma
 const gchar* kh_func_get_name(const KhFunc *func);
 
 void kh_method_add(KhContext *ctx, KhValue *type, const char *name, KhFunc *func);
+KhFunc* kh_method_lookup(KhContext *ctx, KhValue *type, const char *name);
 
 KhValue* kh_eval(KhContext *ctx, KhValue *form);
 KhValue* kh_apply(KhContext *ctx, KhFunc *func, long argc, KhValue **argv);

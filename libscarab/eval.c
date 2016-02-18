@@ -127,7 +127,7 @@ KhValue* kh_scope_lookup(KhScope *scope, const char *name) {
 // bindings set.
 //
 // Also, as the base types can be extended, it has to be called for every new context.
-extern void _register_globals(KhContext *ctx);
+extern void _register_methods(KhContext *ctx);
 
 KhContext* kh_context_new() {
 	static bool core_init_done = false;
@@ -144,11 +144,10 @@ KhContext* kh_context_new() {
 	}
 
 	KhContext *ctx = GC_NEW(KhContext);
-
 	ctx->global_scope = ctx->scope = kh_scope_new(_builtins_scope); // The global scope for the new context
-	_register_globals(ctx);
-
 	ctx->method_tables = g_hash_table_new(g_direct_hash, g_direct_equal);
+
+	_register_methods(ctx);
 
 	return ctx;
 }
@@ -231,7 +230,7 @@ void kh_method_add(KhContext *ctx, KhValue *type, const char *name, KhFunc *func
 		g_hash_table_insert(ctx->method_tables, type, type_methods);
 	}
 
-	g_hash_table_insert(type_methods, g_strdup, func);
+	g_hash_table_insert(type_methods, g_strdup(name), func);
 }
 
 KhFunc* kh_method_lookup(KhContext *ctx, KhValue *type, const char *name) {

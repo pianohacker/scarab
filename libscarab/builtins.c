@@ -90,10 +90,32 @@ static KhValue* set(KhContext *ctx, long argc, KhValue **argv) {
 	return kh_nil;
 }
 
+// ## `@` - call methods
+//
+// Takes a value, method name and an optional number of arguments, and returns the result of calling
+// that method on the given object.
+static KhValue* call_method(KhContext *ctx, long argc, KhValue **argv) {
+	KhValue *value = kh_eval(ctx, argv[0]);
+	_REQUIRE(value);
+
+	KhFunc *method = kh_method_lookup(ctx, KH_VALUE_TYPE(value), KH_SYMBOL(argv[1])->value);
+	KH_FAIL_UNLESS(method, undefined-method, "%s", KH_SYMBOL(argv[1])->value);
+
+	long call_argc = argc - 1;
+	KhValue *call_argv[call_argc];
+
+	// To prevent re-evaluation
+	call_argv[0] = kh_quoted_new(value);
+	for (long i = 1; i < call_argc; i++) call_argv[i] = argv[i + 1];
+
+	return kh_apply(ctx, method, call_argc, call_argv);
+}
+
+
 // ## `def` - defines functions
 //
 // Defines a new function and adds it to the symbol table. Takes the name of the function, a list of
-// names and a list of forms that are the body of the function:
+// argument names and a list of forms that are the body of the function:
 //
 //     def foobar (a b c) {print foo, [1 + 1]}
 //
@@ -113,21 +135,24 @@ static KhValue* def_direct(KhContext *ctx, long argc, KhValue **argv) {
 
 	return kh_nil;
 }
-/*
-// ## `def` - defines functions
+
+// ## `def-method` - defines methods
 //
-// Defines a new function and adds it to the symbol table. Takes the name of the function, a list of
-// names and a list of forms that are the body of the function:
+// Defines a new function and binds it with the given name to the given type. Takes the type, name
+// of the function, a list of argument names and a list of forms that are the body of the function:
 //
-//     def foobar (a b c) {print foo, [1 + 1]}
+//     def-method type foobar (self a b c) {print foo, [1 + 1]}
 //
 // Where the value of the last form in the body is the return value of the function.
 static KhValue* def_method(KhContext *ctx, long argc, KhValue **argv) {
-	kh_scope_add(kh_context_get_scope(ctx), argv[0]->d_str, _create_func(ctx, argv[0]->d_str, argv[1], argv[2], false));
+	KhValue *type = kh_eval(ctx, argv[0]);
+	_REQUIRE(type);
+	KhValue *func = _create_func(ctx, KH_SYMBOL(argv[1])->value, argv[2], argv[3], false);
+
+	kh_method_add(ctx, type, KH_SYMBOL(argv[1])->value, KH_FUNC(func));
 
 	return kh_nil;
 }
-*/
 
 // ## `eval` - evaluate forms
 //
@@ -255,7 +280,7 @@ static KhValue* record_type(KhContext *ctx, long argc, KhValue **argv) {
 //
 // Like `cdr`, returns all but the first element of a list.
 static KhValue* rest(KhContext *ctx, long argc, KhValue **argv) {
-	return KH_CELL(argv[0])->right;
+	return KH_IS_CELL(argv[0]) ? KH_CELL(argv[0])->right : kh_nil;
 }
 
 #define _REG_VARARGS(name, func, min_argc, max_argc, is_direct) kh_scope_add(_builtins_scope, name, kh_func_new_c(#name, func, min_argc, max_argc, is_direct));
@@ -264,9 +289,11 @@ static KhValue* rest(KhContext *ctx, long argc, KhValue **argv) {
 void _register_builtins(KhScope *_builtins_scope) {
 	_REG_VARARGS("+", add, 1, LONG_MAX, false);
 	_REG("=", set, 2, true);
+	_REG_VARARGS("@", call_method, 2, LONG_MAX, true);
 	_REG("atom?", atom, 1, false);
 	_REG("def", def, 3, true);
 	_REG("def-direct", def_direct, 3, true);
+	_REG("def-method", def_method, 3, true);
 	_REG("eval", eval, 1, false);
 	_REG("first", first, 1, false);
 	_REG("get-key", get_key, 2, true);
@@ -281,5 +308,16 @@ void _register_builtins(KhScope *_builtins_scope) {
 	_REG("rest", rest, 1, false);
 }
 
-void _register_globals(KhContext *ctx) {
+// # Builtin methods
+// ## `string`
+// ### `to-string` - returns a new string with the same contents
+static KhValue* string_to_string(KhContext *ctx, long argc, KhValue **argv) {
+	return kh_string_new(KH_STRING(argv[0])->value);
+}
+
+#define _METH_VARARGS(type, name, func, min_argc, max_argc, is_direct) kh_method_add(ctx, (KhValue*) type, name, KH_FUNC(kh_func_new_c(#name, func, min_argc, max_argc, is_direct)));
+#define _METH(type, name, func, argc, is_direct) _METH_VARARGS(type, name, func, argc, argc, is_direct)
+
+void _register_methods(KhContext *ctx) {
+	_METH(KH_STRING_TYPE, "to-string", string_to_string, 1, false);
 }

@@ -167,6 +167,8 @@ static void _inspect(const KhValue *value, GString *result) {
 			case KH_RECORD_TYPE_TYPE:
 				g_string_append(result, "*record-type*");
 				break;
+			default:
+				assert(0);
 		}
 	} else if (KH_IS_RECORD(value)) {
 		g_string_append(result, "(*record");

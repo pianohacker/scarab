@@ -43,12 +43,22 @@ typedef enum {
 
 #define _KH_NEW_BASIC(t, struct_type) ({ struct_type *result = GC_MALLOC(sizeof(struct_type)); ((KhValue*) result)->type = (KhValue *) t; result; })
 
+// # Values
+
+// A Scarab value is a struct that is C-style "inherited" by any of the defined value types. This is
+// done by making the first value of those structs a bare `KhValue`, so those structs can be cast to
+// either a `KhValue*` or their actual type.
 typedef struct _KhValue {
+	// The only field common to all values is the `type` pointer, which may contain a pointer to an
+	// actual value (currently only a `record-type`) or a small integer from the `KhBasicType` enum
+	// for basic types.
 	struct _KhValue *type;
 } KhValue;
 
 //const char *kh_value_type_name(KhValue *type);
 
+// Most of the basic types follow roughly the same pattern; inherit from `KhValue`, then one or two
+// fields containing the underlying value.
 typedef struct {
 	KhValue base;
 
@@ -81,6 +91,9 @@ typedef struct {
 } KhQuoted;
 
 extern KhValue *kh_nil;
+
+// Other basic types (such as `KhFunc` or `KhRecordType`) are inspected less frequently, so they are
+// defined elsewhere and their actual struct definitions are hidden.
 
 KhValue* kh_nil_new();
 KhValue* kh_int_new(long val);
