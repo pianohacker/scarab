@@ -1,0 +1,4 @@
+[package]
+name = "scarab"
+version = "0.3.0"
+authors = ["Jesse Weaver <pianohacker@gmail.com>"]
