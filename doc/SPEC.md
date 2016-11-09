@@ -34,14 +34,13 @@ May appear anywhere within a line (though is of course ignored within strings).
 : `-? [0-9]+ (.[0-9]+)?`
 
 `STRING-CONTENT`
-: `\[nrt"'\\n] | [^\n"]`  
-Escaped newlines within strings are included in the tokenized result, but any whitespace at the
-beginning of the following line is not.
+: `\[nrt"'] | [^\n"]`  
 
 `BACKQUOTE-STRING-CONTENT`
 : `` \` | [^`] ``
-: Any escaped characters besides `` ` `` are preserved; `` `blah\n \\ \` blah` `` tokenizes the same as
-`` "blah \\n \\\\ ` blah" ``. Also, backquoted strings can span newlines.
+: Any escaped characters are tokenized with the backslashes kept; `` `blah\n \\ \`
+blah` `` tokenizes the same as `` "blah \\n \\\\ \\` blah" ``. Also, backquoted strings can span
+newlines.
 
 `STRING`
 : ``" STRING-CONTENT* " | ` BACKQUOTE-STRING-CONTENT* ` ``
