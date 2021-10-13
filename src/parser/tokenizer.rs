@@ -10,6 +10,15 @@ use thiserror::Error;
 pub enum TokenizeError {
     #[error("unexpected character: {0}")]
     UnexpectedChar(char),
+    #[error("invalid integer")]
+    InvalidInteger,
+    #[error("unparsable integer")]
+    UnparsableInteger {
+        #[from]
+        source: std::num::ParseIntError,
+    },
+    #[error("unterminated string")]
+    UnterminatedString,
     #[error("placeholder")]
     Placeholder,
 }
@@ -25,7 +34,18 @@ pub enum Token {
     LBrace,
     RBrace,
     Quote,
+    Newline,
+    Integer(isize),
     String(String),
+    Identifier(String),
+}
+
+fn char_is_token_end(c: char) -> bool {
+    match c {
+        '(' | ')' | '[' | ']' | '{' | '}' | '\'' | '"' | '\n' => true,
+        _ if c.is_ascii_whitespace() => true,
+        _ => false,
+    }
 }
 
 struct TakeWhileUngreedy<'a, T, I: Iterator<Item = T>, P> {
@@ -77,10 +97,54 @@ where
         let result = self.input.take_while_ungreedy(|x| *x != '\"').collect();
 
         if let None = self.input.next() {
-            return Err(TokenizeError::Placeholder);
+            return Err(TokenizeError::UnterminatedString);
         }
 
         Ok(result)
+    }
+
+    fn tokenize_identifier(&mut self, first_char: char) -> TResult<String> {
+        Ok(std::iter::once(first_char)
+            .chain(
+                self.input
+                    .take_while_ungreedy(|x| !char_is_token_end(*x) && !x.is_ascii_whitespace()),
+            )
+            .collect())
+    }
+
+    fn tokenize_integer(&mut self, mut first_char: char) -> TResult<isize> {
+        let sign = if first_char == '-' {
+            first_char = self.input.next().ok_or(TokenizeError::Placeholder)?;
+            -1
+        } else {
+            1
+        };
+
+        let mut base = 10;
+
+        if first_char == '0' {
+            match self.input.peek() {
+                Some('b') => {
+                    base = 2;
+                    self.input.next();
+                    first_char = self.input.next().ok_or(TokenizeError::InvalidInteger)?;
+                }
+                Some('x') => {
+                    base = 16;
+                    self.input.next();
+                    first_char = self.input.next().ok_or(TokenizeError::InvalidInteger)?;
+                }
+                _ => {}
+            }
+        }
+
+        let s = std::iter::once(first_char)
+            .chain(self.input.take_while_ungreedy(|x| !char_is_token_end(*x)))
+            .collect::<String>();
+
+        isize::from_str_radix(&s, base)
+            .map(|x| x * sign)
+            .map_err(|e| e.into())
     }
 }
 
@@ -91,11 +155,15 @@ where
     type Item = TResult<Token>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        use Token::{String as TokenString, *};
+        use Token::*;
 
         if self.stopped {
             return None;
         }
+
+        self.input
+            .take_while_ungreedy(|x| x.is_ascii_whitespace() && *x != '\n')
+            .for_each(drop);
 
         let result = self.input.next().map(|c| match c {
             '(' => Ok(LParen),
@@ -105,7 +173,13 @@ where
             '{' => Ok(LBrace),
             '}' => Ok(RBrace),
             '\'' => Ok(Quote),
-            '"' => Ok(TokenString(self.tokenize_string()?)),
+            '\n' => Ok(Newline),
+            '"' => Ok(String(self.tokenize_string()?)),
+            _ if c.is_ascii_digit() => Ok(Integer(self.tokenize_integer(c)?)),
+            '-' if self.input.peek().map_or(false, |c2| c2.is_ascii_digit()) => {
+                Ok(Integer(self.tokenize_integer(c)?))
+            }
+            _ if !c.is_control() => Ok(Identifier(self.tokenize_identifier(c)?)),
             _ => Err(TokenizeError::UnexpectedChar(c)),
         });
 
@@ -205,6 +279,150 @@ mod tests {
     ),
 ]
 "#
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn unterminated_string() -> TResult<()> {
+        assert_err_matches_regex!(try_tokenize("\"abc"), r#"Unterminated"#);
+
+        Ok(())
+    }
+
+    #[test]
+    fn space_separated_tokens() -> TResult<()> {
+        snapshot!(
+            try_tokenize("( \"abc\"\t\n{}")?,
+            r#"
+[
+    LParen,
+    String(
+        "abc",
+    ),
+    Newline,
+    LBrace,
+    RBrace,
+]
+"#
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn identifiers() -> TResult<()> {
+        snapshot!(
+            try_tokenize("identifier1 identifier!2?)identifier3")?,
+            r#"
+[
+    Identifier(
+        "identifier1",
+    ),
+    Identifier(
+        "identifier!2?",
+    ),
+    RParen,
+    Identifier(
+        "identifier3",
+    ),
+]
+"#
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn leading_dash_identifiers() -> TResult<()> {
+        snapshot!(
+            try_tokenize(r#"- -a"#)?,
+            r#"
+[
+    Identifier(
+        "-",
+    ),
+    Identifier(
+        "-a",
+    ),
+]
+"#
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn integers() -> TResult<()> {
+        snapshot!(
+            try_tokenize_uncollapsed("0 123 4 0b11001 0x46aF -3 -0b111 -0x77D"),
+            "
+[
+    Ok(
+        Integer(
+            0,
+        ),
+    ),
+    Ok(
+        Integer(
+            123,
+        ),
+    ),
+    Ok(
+        Integer(
+            4,
+        ),
+    ),
+    Ok(
+        Integer(
+            25,
+        ),
+    ),
+    Ok(
+        Integer(
+            18095,
+        ),
+    ),
+    Ok(
+        Integer(
+            -3,
+        ),
+    ),
+    Ok(
+        Integer(
+            -7,
+        ),
+    ),
+    Ok(
+        Integer(
+            -1917,
+        ),
+    ),
+]
+"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn partial_integer() -> TResult<()> {
+        assert_err_matches_regex!(try_tokenize("0b"), r#"InvalidInteger"#);
+        assert_err_matches_regex!(try_tokenize("0x"), r#"InvalidInteger"#);
+
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_integer() -> TResult<()> {
+        assert_err_matches_regex!(try_tokenize("04y"), r#"UnparsableInteger.*Digit"#);
+        assert_err_matches_regex!(try_tokenize("0b12"), r#"UnparsableInteger.*Digit"#);
+        assert_err_matches_regex!(try_tokenize("0xAZ"), r#"UnparsableInteger.*Digit"#);
+
+        assert_err_matches_regex!(
+            try_tokenize("0xFFFFFFFFFFFFFFFFFFFFFFFF"),
+            r#"UnparsableInteger.*Overflow"#
         );
 
         Ok(())
