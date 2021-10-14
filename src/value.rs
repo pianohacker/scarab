@@ -4,5 +4,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-mod parser;
-mod value;
+use std::rc::Rc;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Value {
+    Nil,
+    Integer(isize),
+    String(String),
+    Identifier(String),
+    Cell(Rc<Value>, Rc<Value>),
+    Quoted(Rc<Value>),
+}

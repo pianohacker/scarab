@@ -6,7 +6,9 @@
 
 use thiserror::Error;
 
-#[derive(Error, Debug, Eq, PartialEq)]
+use super::utils::TakeWhileUngreedy;
+
+#[derive(Clone, Error, Debug, Eq, PartialEq)]
 pub enum TokenizeError {
     #[error("unexpected character: {0}")]
     UnexpectedChar(char),
@@ -19,8 +21,6 @@ pub enum TokenizeError {
     },
     #[error("unterminated string")]
     UnterminatedString,
-    #[error("placeholder")]
-    Placeholder,
 }
 
 type TResult<T> = Result<T, TokenizeError>;
@@ -35,6 +35,7 @@ pub enum Token {
     RBrace,
     Quote,
     Newline,
+    Comma,
     Integer(isize),
     String(String),
     Identifier(String),
@@ -42,45 +43,9 @@ pub enum Token {
 
 fn char_is_token_end(c: char) -> bool {
     match c {
-        '(' | ')' | '[' | ']' | '{' | '}' | '\'' | '"' | '\n' => true,
+        '(' | ')' | '[' | ']' | '{' | '}' | '\'' | '"' | '\n' | ',' => true,
         _ if c.is_ascii_whitespace() => true,
         _ => false,
-    }
-}
-
-struct TakeWhileUngreedy<'a, T, I: Iterator<Item = T>, P> {
-    input: &'a mut std::iter::Peekable<I>,
-    predicate: P,
-}
-
-trait TakeWhileUngreedyHelper<T, I: Iterator<Item = T>, P: FnMut(&T) -> bool> {
-    fn take_while_ungreedy(&mut self, predicate: P) -> TakeWhileUngreedy<T, I, P>;
-}
-
-impl<T, I: Iterator<Item = T>, P: FnMut(&T) -> bool> TakeWhileUngreedyHelper<T, I, P>
-    for std::iter::Peekable<I>
-{
-    fn take_while_ungreedy(&mut self, predicate: P) -> TakeWhileUngreedy<T, I, P> {
-        TakeWhileUngreedy {
-            input: self,
-            predicate,
-        }
-    }
-}
-
-impl<'a, T, I: Iterator<Item = T>, P: FnMut(&T) -> bool> Iterator
-    for TakeWhileUngreedy<'a, T, I, P>
-{
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let value = self.input.peek()?;
-
-        if (self.predicate)(value) {
-            self.input.next()
-        } else {
-            None
-        }
     }
 }
 
@@ -114,7 +79,7 @@ where
 
     fn tokenize_integer(&mut self, mut first_char: char) -> TResult<isize> {
         let sign = if first_char == '-' {
-            first_char = self.input.next().ok_or(TokenizeError::Placeholder)?;
+            first_char = self.input.next().unwrap_or_else(|| unreachable!());
             -1
         } else {
             1
@@ -174,6 +139,7 @@ where
             '}' => Ok(RBrace),
             '\'' => Ok(Quote),
             '\n' => Ok(Newline),
+            ',' => Ok(Comma),
             '"' => Ok(String(self.tokenize_string()?)),
             _ if c.is_ascii_digit() => Ok(Integer(self.tokenize_integer(c)?)),
             '-' if self.input.peek().map_or(false, |c2| c2.is_ascii_digit()) => {
@@ -191,7 +157,7 @@ where
     }
 }
 
-fn tokenize<I>(input: I) -> Tokenizer<I::IntoIter>
+pub fn tokenize<I>(input: I) -> Tokenizer<I::IntoIter>
 where
     I: IntoIterator<Item = char>,
 {
@@ -217,7 +183,7 @@ mod tests {
     #[test]
     fn single_character_tokens() -> TResult<()> {
         snapshot!(
-            try_tokenize("()[]{}'")?,
+            try_tokenize("()[]{}',")?,
             "
 [
     LParen,
@@ -227,6 +193,7 @@ mod tests {
     LBrace,
     RBrace,
     Quote,
+    Comma,
 ]
 "
         );
