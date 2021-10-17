@@ -6,7 +6,7 @@
 
 use scarab::parser::parse_value;
 
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 
 fn main() {
     let stdin = io::stdin();
@@ -14,7 +14,7 @@ fn main() {
 
     let mut line = String::new();
     print!("> ");
-    stdout.flush();
+    stdout.flush().unwrap();
     while let Ok(..) = stdin.read_line(&mut line) {
         if line == "" {
             println!();
@@ -28,6 +28,6 @@ fn main() {
 
         line.clear();
         print!("> ");
-        stdout.flush();
+        stdout.flush().unwrap();
     }
 }
