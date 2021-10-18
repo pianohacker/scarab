@@ -6,12 +6,18 @@
 
 use std::rc::Rc;
 
-#[derive(Debug, PartialEq, Eq)]
+pub type Identifier = String;
+
+pub fn identifier(i: impl Into<String>) -> Identifier {
+    i.into()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
     Nil,
     Integer(isize),
     String(String),
-    Identifier(String),
+    Identifier(Identifier),
     Cell(Rc<Value>, Rc<Value>),
     Quoted(Rc<Value>),
 }
@@ -42,6 +48,13 @@ impl Value {
         match self {
             Value::Cell(l, r) => (l, r),
             _ => panic!("tried to unwrap {:?} as cell", self),
+        }
+    }
+
+    pub fn as_isize(&self) -> Option<isize> {
+        match self {
+            Value::Integer(i) => Some(*i),
+            _ => None,
         }
     }
 }
@@ -99,6 +112,12 @@ mod tests {
     #[test]
     fn integer_display() {
         snapshot!(format!("{}", Value::Integer(4567)), "4567");
+    }
+
+    #[test]
+    fn integer_conversion() {
+        assert_eq!(Value::Integer(42).as_isize(), Some(42));
+        assert_eq!(Value::Nil.as_isize(), None);
     }
 
     #[test]
