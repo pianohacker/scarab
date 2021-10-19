@@ -224,6 +224,7 @@ impl<O: io::Write> Vm<O> {
 mod tests {
     use super::Instruction as I;
     use super::*;
+    use crate::value;
 
     use k9::{assert_err_matches_regex, snapshot};
     use std::rc::Rc;
@@ -262,11 +263,11 @@ mod tests {
                 I::AllocRegisters { count: 2 },
                 I::LoadImmediate {
                     dest: 0,
-                    value: Value::Integer(42)
+                    value: value!(42)
                 },
                 I::LoadImmediate {
                     dest: 1,
-                    value: Value::Integer(93)
+                    value: value!(93)
                 },
                 I::CallInternal {
                     ident: value::identifier("+"),

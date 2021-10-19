@@ -94,6 +94,66 @@ impl std::fmt::Display for Value {
     }
 }
 
+impl std::convert::From<&str> for Value {
+    fn from(s: &str) -> Self {
+        Value::String(s.to_string())
+    }
+}
+
+impl std::convert::From<isize> for Value {
+    fn from(s: isize) -> Self {
+        Value::Integer(s.into())
+    }
+}
+
+/// Rough analog of Scarab syntax (though only basic lists). `'` is replaced with `@`.
+#[macro_export]
+macro_rules! value {
+    ((@$quoted_first:tt $($inner:tt)+)) => {
+        $crate::value::Value::Cell(
+            std::rc::Rc::new($crate::value::Value::Quoted(std::rc::Rc::new(value!($quoted_first)))),
+            std::rc::Rc::new(value!(($($inner)+))),
+        )
+    };
+
+    ((@$quoted_inner:tt)) => {
+        $crate::value::Value::Cell(
+            std::rc::Rc::new($crate::value::Value::Quoted(std::rc::Rc::new(value!($quoted_inner)))),
+            std::rc::Rc::new($crate::value::Value::Nil),
+        )
+    };
+
+    (($first:tt $($inner:tt)+)) => {
+        $crate::value::Value::Cell(
+            std::rc::Rc::new(value!($first)),
+            std::rc::Rc::new(value!(($($inner)+))),
+        )
+    };
+
+    (($inner:tt)) => {
+        $crate::value::Value::Cell(
+            std::rc::Rc::new(value!($inner)),
+            std::rc::Rc::new($crate::value::Value::Nil),
+        )
+    };
+
+    (@$quoted:tt) => {
+        $crate::value::Value::Quoted(std::rc::Rc::new(value!($quoted)))
+    };
+
+    ($ident:ident) => {
+        $crate::value::Value::Identifier($crate::value::identifier(stringify!($ident)))
+    };
+
+    ($value:expr) => {
+        Value::from($value)
+    };
+
+    ($tt:tt) => {
+        $crate::value::Value::Identifier($crate::value::identifier(stringify!($tt)))
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,13 +165,29 @@ mod tests {
     }
 
     #[test]
+    fn string_macro() {
+        assert_eq!(Value::String("abc".to_string()), value!("abc"));
+    }
+
+    #[test]
     fn identifier_display() {
         snapshot!(format!("{}", Value::Identifier("abc".to_string())), "abc");
     }
 
     #[test]
+    fn identifier_macro() {
+        assert_eq!(Value::Identifier("abc".to_string()), value!(abc));
+        assert_eq!(Value::Identifier("+".to_string()), value!(+));
+    }
+
+    #[test]
     fn integer_display() {
         snapshot!(format!("{}", Value::Integer(4567)), "4567");
+    }
+
+    #[test]
+    fn integer_macro() {
+        assert_eq!(Value::Integer(4567), value!(4567));
     }
 
     #[test]
@@ -132,6 +208,15 @@ mod tests {
                 Value::Quoted(Rc::new(Value::Identifier("abc".to_string())))
             ),
             "'abc"
+        );
+    }
+
+    #[test]
+    fn quoted_macro() {
+        assert_eq!(Value::Quoted(Rc::new(Value::Integer(4567))), value!(@4567),);
+        assert_eq!(
+            Value::Quoted(Rc::new(Value::Identifier("abc".to_string()))),
+            value!(@abc),
         );
     }
 
@@ -160,6 +245,79 @@ mod tests {
                 )
             ),
             "(123 abc \"def\")"
+        );
+    }
+
+    #[test]
+    fn cell_macro() {
+        assert_eq!(
+            Value::Cell(Rc::new(Value::Integer(4567)), Rc::new(Value::Nil)),
+            value!((4567))
+        );
+
+        assert_eq!(
+            Value::Cell(
+                Rc::new(Value::Integer(123)),
+                Rc::new(Value::Cell(
+                    Rc::new(Value::Identifier("abc".to_string())),
+                    Rc::new(Value::Cell(
+                        Rc::new(Value::String("def".to_string())),
+                        Rc::new(Value::Nil)
+                    ))
+                ))
+            ),
+            value!((123 abc "def"))
+        );
+
+        assert_eq!(
+            Value::Cell(
+                Rc::new(Value::Integer(123)),
+                Rc::new(Value::Cell(
+                    Rc::new(Value::Cell(
+                        Rc::new(Value::Identifier("def".to_string())),
+                        Rc::new(Value::Nil)
+                    )),
+                    Rc::new(Value::Cell(
+                        Rc::new(Value::String("def".to_string())),
+                        Rc::new(Value::Nil)
+                    ))
+                ))
+            ),
+            value!((123 (def) "def"))
+        );
+    }
+
+    #[test]
+    fn quoted_in_cell() {
+        assert_eq!(
+            Value::Quoted(Rc::new(Value::Cell(
+                Rc::new(Value::Integer(123)),
+                Rc::new(Value::Cell(
+                    Rc::new(Value::Quoted(Rc::new(Value::Cell(
+                        Rc::new(Value::Identifier("def".to_string())),
+                        Rc::new(Value::Cell(
+                            Rc::new(Value::Quoted(Rc::new(Value::Integer(123)))),
+                            Rc::new(Value::Nil)
+                        ),)
+                    )),)),
+                    Rc::new(Value::Cell(
+                        Rc::new(Value::Cell(
+                            Rc::new(Value::Quoted(Rc::new(Value::Integer(123)))),
+                            Rc::new(Value::Cell(
+                                Rc::new(Value::Cell(
+                                    Rc::new(Value::Quoted(Rc::new(Value::String(
+                                        "def".to_string()
+                                    )))),
+                                    Rc::new(Value::Nil)
+                                )),
+                                Rc::new(Value::Nil)
+                            )),
+                        )),
+                        Rc::new(Value::Nil)
+                    ))
+                )),
+            ))),
+            value!(@(123 @(def @123) (@123 (@"def"))))
         );
     }
 }
