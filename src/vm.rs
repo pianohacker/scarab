@@ -4,8 +4,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use crate::value::{self, Value};
+use std::io;
 use thiserror::Error;
+
+use crate::value::{self, Value};
 
 type Pc = usize;
 
@@ -128,16 +130,18 @@ enum Instruction {
     },
 }
 
-struct Vm {
+struct Vm<O: io::Write> {
     instructions: Vec<Instruction>,
     registers: Registers,
+    debug_output: O,
 }
 
-impl Vm {
-    fn new() -> Self {
+impl<O: io::Write> Vm<O> {
+    fn new(debug_output: O) -> Self {
         Self {
             instructions: vec![],
             registers: Registers::new(),
+            debug_output,
         }
     }
 
@@ -183,6 +187,16 @@ impl Vm {
     ) -> VIResult<()> {
         self.registers.push_window(num_args);
 
+        match ident.as_str() {
+            "debug" => {
+                let output: Vec<_> = self.registers.iter().map(|v| format!("{}", v)).collect();
+                write!(self.debug_output, "{}\n", output.join(" ")).unwrap();
+
+                return Ok(());
+            }
+            _ => {}
+        }
+
         let result = match ident.as_str() {
             "+" => self.registers.iter().map(|v| v.as_isize().unwrap()).sum(),
             "-" => self
@@ -210,19 +224,41 @@ impl Vm {
 mod tests {
     use super::Instruction as I;
     use super::*;
-    use k9::{assert_err_matches_regex, snapshot};
 
-    fn run(instructions: Vec<Instruction>) -> VResult<Vec<Value>> {
-        let mut vm = Vm::new();
-        vm.load(instructions);
-        vm.run()?;
-        Ok(vm.into_registers())
+    use k9::{assert_err_matches_regex, snapshot};
+    use std::rc::Rc;
+
+    fn run_into_registers(instructions: Vec<Instruction>) -> VResult<Vec<Value>> {
+        let mut debug_output = Vec::new();
+        let registers = {
+            let mut vm = Vm::new(&mut debug_output);
+            vm.load(instructions);
+            vm.run()?;
+            Ok(vm.into_registers())
+        }?;
+
+        if debug_output.len() != 0 {
+            dbg!(std::str::from_utf8(&debug_output).unwrap());
+        }
+
+        Ok(registers)
+    }
+
+    fn run_into_output(instructions: Vec<Instruction>) -> VResult<String> {
+        let mut debug_output = Vec::new();
+        {
+            let mut vm = Vm::new(&mut debug_output);
+            vm.load(instructions);
+            vm.run()?;
+        }
+
+        Ok(String::from_utf8(debug_output).unwrap())
     }
 
     #[test]
     fn basic_add() -> VResult<()> {
         snapshot!(
-            run(vec![
+            run_into_registers(vec![
                 I::AllocRegisters { count: 2 },
                 I::LoadImmediate {
                     dest: 0,
@@ -255,7 +291,7 @@ mod tests {
     #[test]
     fn subtract_and_add() -> VResult<()> {
         snapshot!(
-            run(vec![
+            run_into_registers(vec![
                 I::AllocRegisters { count: 3 },
                 I::LoadImmediate {
                     dest: 0,
@@ -297,11 +333,45 @@ mod tests {
     #[test]
     fn unknown_internal_func_fails() -> VResult<()> {
         assert_err_matches_regex!(
-            run(vec![I::CallInternal {
+            run_into_registers(vec![I::CallInternal {
                 ident: value::identifier("unknown"),
                 num_args: 0,
             },]),
             "UnknownInternal"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn debug() -> VResult<()> {
+        snapshot!(
+            run_into_output(vec![
+                I::AllocRegisters { count: 3 },
+                I::LoadImmediate {
+                    dest: 0,
+                    value: Value::String("blah".to_string())
+                },
+                I::LoadImmediate {
+                    dest: 1,
+                    value: Value::Integer(100)
+                },
+                I::LoadImmediate {
+                    dest: 2,
+                    value: Value::Cell(
+                        Rc::new(Value::Identifier(value::identifier("abc"))),
+                        Rc::new(Value::Nil)
+                    ),
+                },
+                I::CallInternal {
+                    ident: value::identifier("debug"),
+                    num_args: 3,
+                },
+            ])?,
+            r#"
+"blah" 100 (abc)
+
+"#
         );
 
         Ok(())
