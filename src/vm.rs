@@ -351,18 +351,15 @@ mod tests {
                 I::AllocRegisters { count: 3 },
                 I::LoadImmediate {
                     dest: 0,
-                    value: Value::String("blah".to_string())
+                    value: value!("blah"),
                 },
                 I::LoadImmediate {
                     dest: 1,
-                    value: Value::Integer(100)
+                    value: value!(100),
                 },
                 I::LoadImmediate {
                     dest: 2,
-                    value: Value::Cell(
-                        Rc::new(Value::Identifier(value::identifier("abc"))),
-                        Rc::new(Value::Nil)
-                    ),
+                    value: value!((abc)),
                 },
                 I::CallInternal {
                     ident: value::identifier("debug"),
