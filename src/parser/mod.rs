@@ -11,11 +11,11 @@ use std::rc::Rc;
 use thiserror::Error;
 
 use self::tokenizer::{tokenize, Token, Tokenizer};
-use self::utils::TakeWhileUngreedy;
+use self::utils::{PositionLabeled, TakeWhileUngreedyExt};
 use crate::value::Value;
 
 #[derive(Error, Debug, Eq, PartialEq)]
-pub enum ParseError {
+pub enum Error {
     #[error("unexpected end of input")]
     EOF,
     #[error("mismatched operator list; operator {1} does not match initial operator {0}")]
@@ -23,17 +23,17 @@ pub enum ParseError {
     #[error("{source}")]
     Tokenize {
         #[from]
-        source: self::tokenizer::TokenizeError,
+        source: self::tokenizer::Error,
     },
     #[error("unexpected token")]
-    UnexpectedToken(Token),
+    UnexpectedToken(PositionLabeled<Token>),
     #[error("unterminated list")]
     UnterminatedList,
     #[error("placeholder")]
     Placeholder,
 }
 
-type PResult<T> = Result<T, ParseError>;
+type Result<T> = std::result::Result<T, Error>;
 
 pub struct Parser<I: Iterator<Item = char>> {
     input: std::iter::Peekable<Tokenizer<I>>,
@@ -41,9 +41,12 @@ pub struct Parser<I: Iterator<Item = char>> {
 
 macro_rules! expect_match {
     ($self:expr$(, $pat:pat => $body:expr)+$(,)?) => {
-        match $self.expect_next()? {
-            $($pat => $body,)+
-            next => return Err(ParseError::UnexpectedToken(next)),
+        {
+            let instance = $self.expect_next()?;
+            match instance.contents {
+                $($pat => $body,)+
+                _ => return Err(Error::UnexpectedToken(instance)),
+            }
         }
     }
 }
@@ -55,36 +58,36 @@ impl<I: Iterator<Item = char>> Parser<I> {
         })
     }
 
-    fn expect_next(&mut self) -> PResult<Token> {
+    fn expect_next(&mut self) -> Result<PositionLabeled<Token>> {
         self.input
             .next()
-            .ok_or(ParseError::EOF)?
-            .map_err(|e| ParseError::from(e.clone()))
+            .ok_or(Error::EOF)?
+            .map_err(|e| Error::from(e.clone()))
     }
 
-    fn expect_peek_or(&mut self, error: ParseError) -> PResult<&Token> {
+    fn expect_peek_or(&mut self, error: Error) -> Result<&PositionLabeled<Token>> {
         self.input
             .peek()
             .ok_or(error)?
             .as_ref()
-            .map_err(|e| ParseError::from(e.clone()))
+            .map_err(|e| Error::from(e.clone()))
     }
 
-    fn parse_list(&mut self, terminator_predicate: impl Fn(&Token) -> bool) -> PResult<Value> {
+    fn parse_list(&mut self, terminator_predicate: impl Fn(&Token) -> bool) -> Result<Value> {
         let mut elements = vec![];
 
-        while !terminator_predicate(self.expect_peek_or(ParseError::UnterminatedList)?) {
+        while !terminator_predicate(&self.expect_peek_or(Error::UnterminatedList)?.contents) {
             elements.push(self.parse_value()?);
         }
 
         assert!(terminator_predicate(
-            self.expect_peek_or(ParseError::UnterminatedList)?
+            &self.expect_peek_or(Error::UnterminatedList)?.contents
         ));
 
         Ok(Self::elements_to_list(elements))
     }
 
-    fn parse_operator_list(&mut self) -> PResult<Value> {
+    fn parse_operator_list(&mut self) -> Result<Value> {
         let first = self.parse_value()?;
 
         let operator = expect_match! { self,
@@ -95,27 +98,29 @@ impl<I: Iterator<Item = char>> Parser<I> {
 
         let mut elements = vec![Value::Identifier(operator.clone()), first, second];
 
-        while *self.expect_peek_or(ParseError::UnterminatedList)? != Token::RBracket {
+        while self.expect_peek_or(Error::UnterminatedList)?.contents != Token::RBracket {
             let next_operator = expect_match! { self,
                 Token::Identifier(i) => i,
             };
 
             if next_operator != operator {
-                return Err(ParseError::MismatchedOperatorList(operator, next_operator));
+                return Err(Error::MismatchedOperatorList(operator, next_operator));
             }
 
             elements.push(self.parse_value()?);
         }
 
-        assert_eq!(self.input.next(), Some(Ok(Token::RBracket)));
+        expect_match! { self,
+            Token::RBracket => {},
+        };
 
         Ok(Self::elements_to_list(elements))
     }
 
-    fn parse_form_list(&mut self) -> PResult<Value> {
+    fn parse_form_list(&mut self) -> Result<Value> {
         let mut lists = vec![];
 
-        while *self.expect_peek_or(ParseError::UnterminatedList)? != Token::RBrace {
+        while self.expect_peek_or(Error::UnterminatedList)?.contents != Token::RBrace {
             let list = self.parse_list(|t| {
                 *t == Token::Comma || *t == Token::Newline || *t == Token::RBrace
             })?;
@@ -126,17 +131,21 @@ impl<I: Iterator<Item = char>> Parser<I> {
 
             self.input
                 .take_while_ungreedy(|t| {
-                    t.as_ref()
-                        .map_or(false, |t| *t == Token::Comma || *t == Token::Newline)
+                    t.as_ref().map_or(false, |t| {
+                        t.contents == Token::Comma || t.contents == Token::Newline
+                    })
                 })
                 .for_each(drop);
         }
 
-        assert_eq!(self.input.next(), Some(Ok(Token::RBrace)));
+        expect_match! { self,
+            Token::RBrace => {},
+        };
+
         Ok(Self::elements_to_list(lists))
     }
 
-    pub fn parse_value(&mut self) -> PResult<Value> {
+    pub fn parse_value(&mut self) -> Result<Value> {
         expect_match! { self,
             Token::Integer(i) => Ok(Value::Integer(i)),
             Token::String(s) => Ok(Value::String(s)),
@@ -153,7 +162,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
     }
 }
 
-pub fn parse_value<I>(input: I) -> PResult<Value>
+pub fn parse_value<I>(input: I) -> Result<Value>
 where
     I: IntoIterator<Item = char>,
 {
@@ -168,26 +177,26 @@ mod tests {
     use super::*;
     use k9::{assert_err_matches_regex, snapshot};
 
-    fn try_parse(input: &str) -> PResult<Value> {
+    fn try_parse(input: &str) -> Result<Value> {
         parse_value(input.chars())
     }
 
     #[test]
-    fn empty_parse_fails() -> PResult<()> {
+    fn empty_parse_fails() -> Result<()> {
         assert_err_matches_regex!(try_parse(""), "EOF");
 
         Ok(())
     }
 
     #[test]
-    fn unexpected_tokens_fail() -> PResult<()> {
+    fn unexpected_tokens_fail() -> Result<()> {
         assert_err_matches_regex!(try_parse(")"), "Unexpected.*RParen");
 
         Ok(())
     }
 
     #[test]
-    fn single_values() -> PResult<()> {
+    fn single_values() -> Result<()> {
         snapshot!(
             try_parse("123"),
             "
@@ -223,7 +232,7 @@ Ok(
     }
 
     #[test]
-    fn quoted_values() -> PResult<()> {
+    fn quoted_values() -> Result<()> {
         snapshot!(
             try_parse("'abc"),
             r#"
@@ -282,7 +291,7 @@ Ok(
     }
 
     #[test]
-    fn simple_list() -> PResult<()> {
+    fn simple_list() -> Result<()> {
         snapshot!(
             try_parse("(+ 123 456)"),
             r#"
@@ -311,7 +320,7 @@ Ok(
     }
 
     #[test]
-    fn nested_list() -> PResult<()> {
+    fn nested_list() -> Result<()> {
         snapshot!(
             try_parse("(+ ((-) 123) 456)"),
             r#"
@@ -351,7 +360,7 @@ Ok(
     }
 
     #[test]
-    fn simple_operator_list() -> PResult<()> {
+    fn simple_operator_list() -> Result<()> {
         snapshot!(
             try_parse("[1 + 2 + 'a]")?,
             r#"
@@ -385,14 +394,14 @@ Cell(
     }
 
     #[test]
-    fn mismatched_operator_list() -> PResult<()> {
+    fn mismatched_operator_list() -> Result<()> {
         assert_err_matches_regex!(try_parse("[1 + 2 * 3]"), "MismatchedOperatorList");
 
         Ok(())
     }
 
     #[test]
-    fn single_line_form_list() -> PResult<()> {
+    fn single_line_form_list() -> Result<()> {
         snapshot!(
             try_parse("{a b, c d, 1}")?,
             r#"
@@ -438,7 +447,7 @@ Cell(
     }
 
     #[test]
-    fn multi_line_form_list() -> PResult<()> {
+    fn multi_line_form_list() -> Result<()> {
         snapshot!(
             try_parse(
                 "{
@@ -491,7 +500,7 @@ Cell(
     }
 
     #[test]
-    fn unterminated_lists() -> PResult<()> {
+    fn unterminated_lists() -> Result<()> {
         assert_err_matches_regex!(try_parse("(1 2"), "UnterminatedList");
         assert_err_matches_regex!(try_parse("[1 + 2"), "UnterminatedList");
         assert_err_matches_regex!(try_parse("{a c, d"), "UnterminatedList");
@@ -500,7 +509,7 @@ Cell(
     }
 
     #[test]
-    fn tokenize_errors_passed_through() -> PResult<()> {
+    fn tokenize_errors_passed_through() -> Result<()> {
         assert_err_matches_regex!(try_parse("\"abc"), "Tokenize.*String");
         assert_err_matches_regex!(try_parse("(\"abc"), "Tokenize.*String");
 

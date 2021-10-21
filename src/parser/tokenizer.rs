@@ -6,12 +6,14 @@
 
 use thiserror::Error;
 
-use super::utils::TakeWhileUngreedy;
+use super::utils::{
+    PositionLabeled, PositionLabeledCharsExt, StripPositionsExt, TakeWhileUngreedyExt,
+};
 
 #[derive(Clone, Error, Debug, Eq, PartialEq)]
-pub enum TokenizeError {
+pub enum Error {
     #[error("unexpected character: {0}")]
-    UnexpectedChar(char),
+    UnexpectedChar(PositionLabeled<char>),
     #[error("invalid integer")]
     InvalidInteger,
     #[error("unparsable integer")]
@@ -23,7 +25,7 @@ pub enum TokenizeError {
     UnterminatedString,
 }
 
-type TResult<T> = Result<T, TokenizeError>;
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Token {
@@ -50,7 +52,7 @@ fn char_is_token_end(c: char) -> bool {
 }
 
 pub struct Tokenizer<I: Iterator<Item = char>> {
-    input: std::iter::Peekable<I>,
+    input: std::iter::Peekable<super::utils::PositionLabeledChars<I>>,
     stopped: bool,
 }
 
@@ -58,27 +60,34 @@ impl<I> Tokenizer<I>
 where
     I: Iterator<Item = char>,
 {
-    fn tokenize_string(&mut self) -> TResult<String> {
-        let result = self.input.take_while_ungreedy(|x| *x != '\"').collect();
+    fn tokenize_string(&mut self) -> Result<String> {
+        let result = self
+            .input
+            .take_while_ungreedy(|x| x.contents != '\"')
+            .strip_positions()
+            .collect();
 
         if let None = self.input.next() {
-            return Err(TokenizeError::UnterminatedString);
+            return Err(Error::UnterminatedString);
         }
 
         Ok(result)
     }
 
-    fn tokenize_identifier(&mut self, first_char: char) -> TResult<String> {
-        Ok(std::iter::once(first_char)
+    fn tokenize_identifier(&mut self, first_char: PositionLabeled<char>) -> Result<String> {
+        Ok(std::iter::once(first_char.contents)
             .chain(
                 self.input
-                    .take_while_ungreedy(|x| !char_is_token_end(*x) && !x.is_ascii_whitespace()),
+                    .take_while_ungreedy(|x| {
+                        !char_is_token_end(x.contents) && !x.contents.is_ascii_whitespace()
+                    })
+                    .strip_positions(),
             )
             .collect())
     }
 
-    fn tokenize_integer(&mut self, mut first_char: char) -> TResult<isize> {
-        let sign = if first_char == '-' {
+    fn tokenize_integer(&mut self, mut first_char: PositionLabeled<char>) -> Result<isize> {
+        let sign = if first_char.contents == '-' {
             first_char = self.input.next().unwrap_or_else(|| unreachable!());
             -1
         } else {
@@ -87,24 +96,28 @@ where
 
         let mut base = 10;
 
-        if first_char == '0' {
-            match self.input.peek() {
+        if first_char.contents == '0' {
+            match self.input.peek().map(|x| x.contents) {
                 Some('b') => {
                     base = 2;
                     self.input.next();
-                    first_char = self.input.next().ok_or(TokenizeError::InvalidInteger)?;
+                    first_char = self.input.next().ok_or(Error::InvalidInteger)?;
                 }
                 Some('x') => {
                     base = 16;
                     self.input.next();
-                    first_char = self.input.next().ok_or(TokenizeError::InvalidInteger)?;
+                    first_char = self.input.next().ok_or(Error::InvalidInteger)?;
                 }
                 _ => {}
             }
         }
 
-        let s = std::iter::once(first_char)
-            .chain(self.input.take_while_ungreedy(|x| !char_is_token_end(*x)))
+        let s = std::iter::once(first_char.contents)
+            .chain(
+                self.input
+                    .take_while_ungreedy(|x| !char_is_token_end(x.contents))
+                    .strip_positions(),
+            )
             .collect::<String>();
 
         isize::from_str_radix(&s, base)
@@ -117,7 +130,7 @@ impl<I> std::iter::Iterator for Tokenizer<I>
 where
     I: Iterator<Item = char>,
 {
-    type Item = TResult<Token>;
+    type Item = Result<PositionLabeled<Token>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         use Token::*;
@@ -127,26 +140,29 @@ where
         }
 
         self.input
-            .take_while_ungreedy(|x| x.is_ascii_whitespace() && *x != '\n')
+            .take_while_ungreedy(|x| x.is_ascii_whitespace() && x.contents != '\n')
             .for_each(drop);
 
-        let result = self.input.next().map(|c| match c {
-            '(' => Ok(LParen),
-            ')' => Ok(RParen),
-            '[' => Ok(LBracket),
-            ']' => Ok(RBracket),
-            '{' => Ok(LBrace),
-            '}' => Ok(RBrace),
-            '\'' => Ok(Quote),
-            '\n' => Ok(Newline),
-            ',' => Ok(Comma),
-            '"' => Ok(String(self.tokenize_string()?)),
-            _ if c.is_ascii_digit() => Ok(Integer(self.tokenize_integer(c)?)),
-            '-' if self.input.peek().map_or(false, |c2| c2.is_ascii_digit()) => {
-                Ok(Integer(self.tokenize_integer(c)?))
+        let result = self.input.next().map(|c| {
+            match c.contents {
+                '(' => Ok(LParen),
+                ')' => Ok(RParen),
+                '[' => Ok(LBracket),
+                ']' => Ok(RBracket),
+                '{' => Ok(LBrace),
+                '}' => Ok(RBrace),
+                '\'' => Ok(Quote),
+                '\n' => Ok(Newline),
+                ',' => Ok(Comma),
+                '"' => Ok(String(self.tokenize_string()?)),
+                _ if c.is_ascii_digit() => Ok(Integer(self.tokenize_integer(c)?)),
+                '-' if self.input.peek().map_or(false, |c2| c2.is_ascii_digit()) => {
+                    Ok(Integer(self.tokenize_integer(c)?))
+                }
+                _ if !c.is_control() => Ok(Identifier(self.tokenize_identifier(c)?)),
+                _ => Err(Error::UnexpectedChar(c)),
             }
-            _ if !c.is_control() => Ok(Identifier(self.tokenize_identifier(c)?)),
-            _ => Err(TokenizeError::UnexpectedChar(c)),
+            .map(|t| c.label(t))
         });
 
         if let Some(Err(_)) = result {
@@ -162,7 +178,7 @@ where
     I: IntoIterator<Item = char>,
 {
     Tokenizer {
-        input: input.into_iter().peekable(),
+        input: input.into_iter().position_labeled_chars().peekable(),
         stopped: false,
     }
 }
@@ -172,16 +188,24 @@ mod tests {
     use super::*;
     use k9::{assert_err_matches_regex, snapshot};
 
-    fn try_tokenize(input: &str) -> TResult<Vec<Token>> {
-        tokenize(input.chars()).collect()
+    fn try_tokenize(input: &str) -> Result<Vec<Token>> {
+        tokenize(input.chars())
+            .map(|ir| ir.map(|i| i.contents))
+            .collect()
     }
 
-    fn try_tokenize_uncollapsed(input: &str) -> Vec<TResult<Token>> {
+    fn try_tokenize_uncollapsed(input: &str) -> Vec<Result<Token>> {
+        tokenize(input.chars())
+            .map(|ir| ir.map(|i| i.contents))
+            .collect()
+    }
+
+    fn try_tokenize_full(input: &str) -> Result<Vec<PositionLabeled<Token>>> {
         tokenize(input.chars()).collect()
     }
 
     #[test]
-    fn single_character_tokens() -> TResult<()> {
+    fn single_character_tokens() -> Result<()> {
         snapshot!(
             try_tokenize("()[]{}',")?,
             "
@@ -202,14 +226,14 @@ mod tests {
     }
 
     #[test]
-    fn unexpected_single_character_tokens() -> TResult<()> {
+    fn unexpected_single_character_tokens() -> Result<()> {
         assert_err_matches_regex!(try_tokenize("\x07"), r#"\\u\{7\}"#);
 
         Ok(())
     }
 
     #[test]
-    fn tokenizing_stops_after_error() -> TResult<()> {
+    fn tokenizing_stops_after_error() -> Result<()> {
         snapshot!(
             try_tokenize_uncollapsed("(\x07)"),
             r"
@@ -219,7 +243,11 @@ mod tests {
     ),
     Err(
         UnexpectedChar(
-            '\u{7}',
+            PositionLabeled {
+                contents: '\u{7}',
+                line: 1,
+                column: 2,
+            },
         ),
     ),
 ]
@@ -230,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn basic_strings() -> TResult<()> {
+    fn basic_strings() -> Result<()> {
         snapshot!(
             try_tokenize(r#""""a""abc""#)?,
             r#"
@@ -252,14 +280,14 @@ mod tests {
     }
 
     #[test]
-    fn unterminated_string() -> TResult<()> {
+    fn unterminated_string() -> Result<()> {
         assert_err_matches_regex!(try_tokenize("\"abc"), r#"Unterminated"#);
 
         Ok(())
     }
 
     #[test]
-    fn space_separated_tokens() -> TResult<()> {
+    fn space_separated_tokens() -> Result<()> {
         snapshot!(
             try_tokenize("( \"abc\"\t\n{}")?,
             r#"
@@ -279,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn identifiers() -> TResult<()> {
+    fn identifiers() -> Result<()> {
         snapshot!(
             try_tokenize("identifier1 identifier!2?)identifier3")?,
             r#"
@@ -302,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn leading_dash_identifiers() -> TResult<()> {
+    fn leading_dash_identifiers() -> Result<()> {
         snapshot!(
             try_tokenize(r#"- -a"#)?,
             r#"
@@ -321,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn integers() -> TResult<()> {
+    fn integers() -> Result<()> {
         snapshot!(
             try_tokenize_uncollapsed("0 123 4 0b11001 0x46aF -3 -0b111 -0x77D"),
             "
@@ -374,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn partial_integer() -> TResult<()> {
+    fn partial_integer() -> Result<()> {
         assert_err_matches_regex!(try_tokenize("0b"), r#"InvalidInteger"#);
         assert_err_matches_regex!(try_tokenize("0x"), r#"InvalidInteger"#);
 
@@ -382,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_integer() -> TResult<()> {
+    fn invalid_integer() -> Result<()> {
         assert_err_matches_regex!(try_tokenize("04y"), r#"UnparsableInteger.*Digit"#);
         assert_err_matches_regex!(try_tokenize("0b12"), r#"UnparsableInteger.*Digit"#);
         assert_err_matches_regex!(try_tokenize("0xAZ"), r#"UnparsableInteger.*Digit"#);
@@ -390,6 +418,85 @@ mod tests {
         assert_err_matches_regex!(
             try_tokenize("0xFFFFFFFFFFFFFFFFFFFFFFFF"),
             r#"UnparsableInteger.*Overflow"#
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn multiline() -> Result<()> {
+        snapshot!(
+            try_tokenize_full(
+                "1234
+(
+\t( 456 )
+  [\"abc\")"
+            )?,
+            r#"
+[
+    PositionLabeled {
+        contents: Integer(
+            1234,
+        ),
+        line: 1,
+        column: 1,
+    },
+    PositionLabeled {
+        contents: Newline,
+        line: 1,
+        column: 5,
+    },
+    PositionLabeled {
+        contents: LParen,
+        line: 2,
+        column: 1,
+    },
+    PositionLabeled {
+        contents: Newline,
+        line: 2,
+        column: 2,
+    },
+    PositionLabeled {
+        contents: LParen,
+        line: 3,
+        column: 2,
+    },
+    PositionLabeled {
+        contents: Integer(
+            456,
+        ),
+        line: 3,
+        column: 4,
+    },
+    PositionLabeled {
+        contents: RParen,
+        line: 3,
+        column: 8,
+    },
+    PositionLabeled {
+        contents: Newline,
+        line: 3,
+        column: 9,
+    },
+    PositionLabeled {
+        contents: LBracket,
+        line: 4,
+        column: 3,
+    },
+    PositionLabeled {
+        contents: String(
+            "abc",
+        ),
+        line: 4,
+        column: 4,
+    },
+    PositionLabeled {
+        contents: RParen,
+        line: 4,
+        column: 9,
+    },
+]
+"#
         );
 
         Ok(())

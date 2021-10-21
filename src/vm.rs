@@ -11,31 +11,31 @@ use crate::value::{self, Value};
 
 type Pc = usize;
 
-type VResult<T> = Result<T, VmError>;
-type VIResult<T> = Result<T, VmErrorInternal>;
+type Result<T> = std::result::Result<T, Error>;
+type IResult<T> = std::result::Result<T, ErrorInternal>;
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct VmError {
-    error: VmErrorInternal,
+pub struct Error {
+    error: ErrorInternal,
     pc: Pc,
 }
 
-impl VmError {
-    fn from_internal(error: VmErrorInternal, pc: Pc) -> Self {
-        VmError { error, pc }
+impl Error {
+    fn from_internal(error: ErrorInternal, pc: Pc) -> Self {
+        Error { error, pc }
     }
 }
 
-impl std::error::Error for VmError {}
+impl std::error::Error for Error {}
 
-impl std::fmt::Display for VmError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
         write!(f, "{} (at PC 0x{:x})", self.error, self.pc)
     }
 }
 
 #[derive(Error, Debug, PartialEq, Eq)]
-enum VmErrorInternal {
+enum ErrorInternal {
     #[error("unknown internal function: {0}")]
     UnknownInternalFunction(value::Identifier),
     #[error("placeholder")]
@@ -149,7 +149,7 @@ impl<O: io::Write> Vm<O> {
         self.instructions = instructions;
     }
 
-    fn run(&mut self) -> VResult<()> {
+    fn run(&mut self) -> Result<()> {
         use Instruction::*;
 
         let mut pc = 0;
@@ -173,18 +173,14 @@ impl<O: io::Write> Vm<O> {
                 }
                 CallInternal { ident, num_args } => self.call_internal(ident, num_args),
             } {
-                return Err(VmError::from_internal(e, cur_pc));
+                return Err(Error::from_internal(e, cur_pc));
             }
         }
 
         Ok(())
     }
 
-    fn call_internal(
-        &mut self,
-        ident: value::Identifier,
-        num_args: RegisterOffset,
-    ) -> VIResult<()> {
+    fn call_internal(&mut self, ident: value::Identifier, num_args: RegisterOffset) -> IResult<()> {
         self.registers.push_window(num_args);
 
         match ident.as_str() {
@@ -205,7 +201,7 @@ impl<O: io::Write> Vm<O> {
                 .map(|v| v.as_isize().unwrap())
                 .reduce(|a, b| a - b)
                 .unwrap(),
-            _ => return Err(VmErrorInternal::UnknownInternalFunction(ident)),
+            _ => return Err(ErrorInternal::UnknownInternalFunction(ident)),
         };
 
         self.registers[0] = Value::Integer(result);
@@ -229,7 +225,7 @@ mod tests {
     use k9::{assert_err_matches_regex, snapshot};
     use std::rc::Rc;
 
-    fn run_into_registers(instructions: Vec<Instruction>) -> VResult<Vec<Value>> {
+    fn run_into_registers(instructions: Vec<Instruction>) -> Result<Vec<Value>> {
         let mut debug_output = Vec::new();
         let registers = {
             let mut vm = Vm::new(&mut debug_output);
@@ -245,7 +241,7 @@ mod tests {
         Ok(registers)
     }
 
-    fn run_into_output(instructions: Vec<Instruction>) -> VResult<String> {
+    fn run_into_output(instructions: Vec<Instruction>) -> Result<String> {
         let mut debug_output = Vec::new();
         {
             let mut vm = Vm::new(&mut debug_output);
@@ -257,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn basic_add() -> VResult<()> {
+    fn basic_add() -> Result<()> {
         snapshot!(
             run_into_registers(vec![
                 I::AllocRegisters { count: 2 },
@@ -290,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn subtract_and_add() -> VResult<()> {
+    fn subtract_and_add() -> Result<()> {
         snapshot!(
             run_into_registers(vec![
                 I::AllocRegisters { count: 3 },
@@ -332,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_internal_func_fails() -> VResult<()> {
+    fn unknown_internal_func_fails() -> Result<()> {
         assert_err_matches_regex!(
             run_into_registers(vec![I::CallInternal {
                 ident: value::identifier("unknown"),
@@ -345,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn debug() -> VResult<()> {
+    fn debug() -> Result<()> {
         snapshot!(
             run_into_output(vec![
                 I::AllocRegisters { count: 3 },
