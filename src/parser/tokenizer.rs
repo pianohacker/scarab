@@ -6,14 +6,15 @@
 
 use thiserror::Error;
 
-use super::utils::{
-    PositionLabeled, PositionLabeledCharsExt, StripPositionsExt, TakeWhileUngreedyExt,
+use result_at::{
+    label_chars, ResultAt, ResultAtCharReader, ResultAtCharReaderError, ResultAtInput,
+    ResultAtReader,
 };
 
 #[derive(Clone, Error, Debug, Eq, PartialEq)]
 pub enum Error {
     #[error("unexpected character: {0}")]
-    UnexpectedChar(PositionLabeled<char>),
+    UnexpectedChar(char),
     #[error("invalid integer")]
     InvalidInteger,
     #[error("unparsable integer")]
@@ -23,11 +24,16 @@ pub enum Error {
     },
     #[error("unterminated string")]
     UnterminatedString,
+    #[error("EOF")]
+    Eof {
+        #[from]
+        source: ResultAtCharReaderError,
+    },
 }
 
 type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Token {
     LParen,
     RParen,
@@ -52,7 +58,7 @@ fn char_is_token_end(c: char) -> bool {
 }
 
 pub struct Tokenizer<I: Iterator<Item = char>> {
-    input: std::iter::Peekable<super::utils::PositionLabeledChars<I>>,
+    input: ResultAtInput<ResultAtCharReader<I>>,
     stopped: bool,
 }
 
@@ -63,32 +69,29 @@ where
     fn tokenize_string(&mut self) -> Result<String> {
         let result = self
             .input
-            .take_while_ungreedy(|x| x.contents != '\"')
-            .strip_positions()
+            .items_while_successful_if(|x| *x != '\"')
             .collect();
 
-        if let None = self.input.next() {
+        if let ResultAt(Err(_), _) = self.input.next() {
             return Err(Error::UnterminatedString);
         }
 
         Ok(result)
     }
 
-    fn tokenize_identifier(&mut self, first_char: PositionLabeled<char>) -> Result<String> {
-        Ok(std::iter::once(first_char.contents)
+    fn tokenize_identifier(&mut self, first_char: char) -> Result<String> {
+        Ok(std::iter::once(first_char)
             .chain(
-                self.input
-                    .take_while_ungreedy(|x| {
-                        !char_is_token_end(x.contents) && !x.contents.is_ascii_whitespace()
-                    })
-                    .strip_positions(),
+                self.input.items_while_successful_if(|x| {
+                    !char_is_token_end(*x) && !x.is_ascii_whitespace()
+                }),
             )
             .collect())
     }
 
-    fn tokenize_integer(&mut self, mut first_char: PositionLabeled<char>) -> Result<isize> {
-        let sign = if first_char.contents == '-' {
-            first_char = self.input.next().unwrap_or_else(|| unreachable!());
+    fn tokenize_integer(&mut self, mut first_char: char) -> Result<isize> {
+        let sign = if first_char == '-' {
+            first_char = self.input.next().0.unwrap_or_else(|_| unreachable!());
             -1
         } else {
             1
@@ -96,27 +99,26 @@ where
 
         let mut base = 10;
 
-        if first_char.contents == '0' {
-            match self.input.peek().map(|x| x.contents) {
-                Some('b') => {
+        if first_char == '0' {
+            match self.input.peek() {
+                ResultAt(Ok('b'), _) => {
                     base = 2;
-                    self.input.next();
-                    first_char = self.input.next().ok_or(Error::InvalidInteger)?;
+                    self.input.next().0.map_err(|_| Error::InvalidInteger)?;
+                    first_char = self.input.next().0.map_err(|_| Error::InvalidInteger)?;
                 }
-                Some('x') => {
+                ResultAt(Ok('x'), _) => {
                     base = 16;
-                    self.input.next();
-                    first_char = self.input.next().ok_or(Error::InvalidInteger)?;
+                    self.input.next().0.map_err(|_| Error::InvalidInteger)?;
+                    first_char = self.input.next().0.map_err(|_| Error::InvalidInteger)?;
                 }
                 _ => {}
             }
         }
 
-        let s = std::iter::once(first_char.contents)
+        let s = std::iter::once(first_char)
             .chain(
                 self.input
-                    .take_while_ungreedy(|x| !char_is_token_end(x.contents))
-                    .strip_positions(),
+                    .items_while_successful_if(|x| !char_is_token_end(*x)),
             )
             .collect::<String>();
 
@@ -126,25 +128,25 @@ where
     }
 }
 
-impl<I> std::iter::Iterator for Tokenizer<I>
+impl<I> ResultAtReader for Tokenizer<I>
 where
     I: Iterator<Item = char>,
 {
-    type Item = Result<PositionLabeled<Token>>;
+    type Output = Token;
+    type Error = Error;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn read_with_position(&mut self) -> ResultAt<Token, Error> {
         use Token::*;
 
-        if self.stopped {
-            return None;
-        }
-
         self.input
-            .take_while_ungreedy(|x| x.is_ascii_whitespace() && x.contents != '\n')
+            .items_while_successful_if(|x| x.is_ascii_whitespace() && *x != '\n')
             .for_each(drop);
 
-        let result = self.input.next().map(|c| {
-            match c.contents {
+        let result = self
+            .input
+            .next()
+            .map_err(Error::from)
+            .and_then(|c| match c {
                 '(' => Ok(LParen),
                 ')' => Ok(RParen),
                 '[' => Ok(LBracket),
@@ -156,16 +158,14 @@ where
                 ',' => Ok(Comma),
                 '"' => Ok(String(self.tokenize_string()?)),
                 _ if c.is_ascii_digit() => Ok(Integer(self.tokenize_integer(c)?)),
-                '-' if self.input.peek().map_or(false, |c2| c2.is_ascii_digit()) => {
+                '-' if self.input.peek().0.map_or(false, |c2| c2.is_ascii_digit()) => {
                     Ok(Integer(self.tokenize_integer(c)?))
                 }
                 _ if !c.is_control() => Ok(Identifier(self.tokenize_identifier(c)?)),
                 _ => Err(Error::UnexpectedChar(c)),
-            }
-            .map(|t| c.label(t))
-        });
+            });
 
-        if let Some(Err(_)) = result {
+        if let ResultAt(Err(_), _) = result {
             self.stopped = true;
         }
 
@@ -173,14 +173,15 @@ where
     }
 }
 
-pub fn tokenize<I>(input: I) -> Tokenizer<I::IntoIter>
+pub fn tokenize<I>(input: I) -> ResultAtInput<Tokenizer<I::IntoIter>>
 where
     I: IntoIterator<Item = char>,
 {
     Tokenizer {
-        input: input.into_iter().position_labeled_chars().peekable(),
+        input: label_chars(input.into_iter()).with_positions(),
         stopped: false,
     }
+    .with_positions()
 }
 
 #[cfg(test)]
@@ -190,18 +191,20 @@ mod tests {
 
     fn try_tokenize(input: &str) -> Result<Vec<Token>> {
         tokenize(input.chars())
-            .map(|ir| ir.map(|i| i.contents))
+            .iter_results()
+            .filter(|r| match r {
+                Err(Error::Eof { .. }) => false,
+                _ => true,
+            })
             .collect()
     }
 
     fn try_tokenize_uncollapsed(input: &str) -> Vec<Result<Token>> {
-        tokenize(input.chars())
-            .map(|ir| ir.map(|i| i.contents))
-            .collect()
+        tokenize(input.chars()).iter_results().collect()
     }
 
-    fn try_tokenize_full(input: &str) -> Result<Vec<PositionLabeled<Token>>> {
-        tokenize(input.chars()).collect()
+    fn try_tokenize_full(input: &str) -> Vec<ResultAt<Token, Error>> {
+        tokenize(input.chars()).iter().collect()
     }
 
     #[test]
@@ -243,11 +246,7 @@ mod tests {
     ),
     Err(
         UnexpectedChar(
-            PositionLabeled {
-                contents: '\u{7}',
-                line: 1,
-                column: 2,
-            },
+            '\u{7}',
         ),
     ),
 ]
@@ -394,6 +393,11 @@ mod tests {
             -1917,
         ),
     ),
+    Err(
+        Eof {
+            source: Eof,
+        },
+    ),
 ]
 "
         );
@@ -431,70 +435,125 @@ mod tests {
 (
 \t( 456 )
   [\"abc\")"
-            )?,
+            ),
             r#"
 [
-    PositionLabeled {
-        contents: Integer(
-            1234,
+    ResultAt(
+        Ok(
+            Integer(
+                1234,
+            ),
         ),
-        line: 1,
-        column: 1,
-    },
-    PositionLabeled {
-        contents: Newline,
-        line: 1,
-        column: 5,
-    },
-    PositionLabeled {
-        contents: LParen,
-        line: 2,
-        column: 1,
-    },
-    PositionLabeled {
-        contents: Newline,
-        line: 2,
-        column: 2,
-    },
-    PositionLabeled {
-        contents: LParen,
-        line: 3,
-        column: 2,
-    },
-    PositionLabeled {
-        contents: Integer(
-            456,
+        (
+            1,
+            1,
         ),
-        line: 3,
-        column: 4,
-    },
-    PositionLabeled {
-        contents: RParen,
-        line: 3,
-        column: 8,
-    },
-    PositionLabeled {
-        contents: Newline,
-        line: 3,
-        column: 9,
-    },
-    PositionLabeled {
-        contents: LBracket,
-        line: 4,
-        column: 3,
-    },
-    PositionLabeled {
-        contents: String(
-            "abc",
+    ),
+    ResultAt(
+        Ok(
+            Newline,
         ),
-        line: 4,
-        column: 4,
-    },
-    PositionLabeled {
-        contents: RParen,
-        line: 4,
-        column: 9,
-    },
+        (
+            1,
+            5,
+        ),
+    ),
+    ResultAt(
+        Ok(
+            LParen,
+        ),
+        (
+            2,
+            1,
+        ),
+    ),
+    ResultAt(
+        Ok(
+            Newline,
+        ),
+        (
+            2,
+            2,
+        ),
+    ),
+    ResultAt(
+        Ok(
+            LParen,
+        ),
+        (
+            3,
+            2,
+        ),
+    ),
+    ResultAt(
+        Ok(
+            Integer(
+                456,
+            ),
+        ),
+        (
+            3,
+            4,
+        ),
+    ),
+    ResultAt(
+        Ok(
+            RParen,
+        ),
+        (
+            3,
+            8,
+        ),
+    ),
+    ResultAt(
+        Ok(
+            Newline,
+        ),
+        (
+            3,
+            9,
+        ),
+    ),
+    ResultAt(
+        Ok(
+            LBracket,
+        ),
+        (
+            4,
+            3,
+        ),
+    ),
+    ResultAt(
+        Ok(
+            String(
+                "abc",
+            ),
+        ),
+        (
+            4,
+            4,
+        ),
+    ),
+    ResultAt(
+        Ok(
+            RParen,
+        ),
+        (
+            4,
+            9,
+        ),
+    ),
+    ResultAt(
+        Err(
+            Eof {
+                source: Eof,
+            },
+        ),
+        (
+            4,
+            10,
+        ),
+    ),
 ]
 "#
         );

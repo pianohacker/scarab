@@ -11,11 +11,11 @@ use std::rc::Rc;
 use thiserror::Error;
 
 use self::tokenizer::{tokenize, Token, Tokenizer};
-use self::utils::{PositionLabeled, TakeWhileUngreedyExt};
 use crate::value::Value;
+use result_at::{ResultAt, ResultAtInput};
 
-#[derive(Error, Debug, Eq, PartialEq)]
-pub enum Error {
+#[derive(Error, Clone, Debug, Eq, PartialEq)]
+pub enum ErrorInternal {
     #[error("unexpected end of input")]
     EOF,
     #[error("mismatched operator list; operator {1} does not match initial operator {0}")]
@@ -26,29 +26,71 @@ pub enum Error {
         source: self::tokenizer::Error,
     },
     #[error("unexpected token")]
-    UnexpectedToken(PositionLabeled<Token>),
+    UnexpectedToken(Token),
     #[error("unterminated list")]
     UnterminatedList,
     #[error("placeholder")]
     Placeholder,
 }
 
+impl From<&ErrorInternal> for ErrorInternal {
+    fn from(e: &ErrorInternal) -> ErrorInternal {
+        e.clone()
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct Error {
+    error: ErrorInternal,
+    line: usize,
+    column: usize,
+}
+
+impl Error {
+    fn from_internal_at(error: ErrorInternal, at: (usize, usize)) -> Self {
+        let (line, column) = at;
+        Error {
+            error,
+            line,
+            column,
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        write!(
+            f,
+            "{} (at line {}, column {})",
+            self.error, self.line, self.column
+        )
+    }
+}
+
 type Result<T> = std::result::Result<T, Error>;
+type IResultAt<T> = ResultAt<T, ErrorInternal>;
 
 pub struct Parser<I: Iterator<Item = char>> {
-    input: std::iter::Peekable<Tokenizer<I>>,
+    input: ResultAtInput<Tokenizer<I>>,
 }
 
 macro_rules! expect_match {
-    ($self:expr$(, $pat:pat => $body:expr)+$(,)?) => {
+    ($token_at:expr, { $($pat:pat => $body:expr),+$(,)? }) => {
         {
-            let instance = $self.expect_next()?;
-            match instance.contents {
+            let (token, at) = $token_at;
+            match token {
                 $($pat => $body,)+
-                _ => return Err(Error::UnexpectedToken(instance)),
+                _ => return ResultAt(
+                    Err(
+                        ErrorInternal::UnexpectedToken(token),
+                    ),
+                    at,
+                ),
             }
         }
-    }
+    };
 }
 
 impl<I: Iterator<Item = char>> Parser<I> {
@@ -58,107 +100,113 @@ impl<I: Iterator<Item = char>> Parser<I> {
         })
     }
 
-    fn expect_next(&mut self) -> Result<PositionLabeled<Token>> {
-        self.input
-            .next()
-            .ok_or(Error::EOF)?
-            .map_err(|e| Error::from(e.clone()))
+    fn next(&mut self) -> IResultAt<Token> {
+        self.input.next().map_err(|e| ErrorInternal::from(e))
     }
 
-    fn expect_peek_or(&mut self, error: Error) -> Result<&PositionLabeled<Token>> {
-        self.input
-            .peek()
-            .ok_or(error)?
-            .as_ref()
-            .map_err(|e| Error::from(e.clone()))
+    fn peek_or(&mut self, error: ErrorInternal) -> ResultAt<&Token, ErrorInternal> {
+        self.input.peek().as_ref().map_err(|e| match e {
+            tokenizer::Error::Eof { .. } => error,
+            _ => e.clone().into(),
+        })
     }
 
-    fn parse_list(&mut self, terminator_predicate: impl Fn(&Token) -> bool) -> Result<Value> {
+    fn parse_list(
+        &mut self,
+        terminator_predicate: impl Fn(&Token) -> bool,
+        at: (usize, usize),
+    ) -> IResultAt<Value> {
         let mut elements = vec![];
 
-        while !terminator_predicate(&self.expect_peek_or(Error::UnterminatedList)?.contents) {
-            elements.push(self.parse_value()?);
+        while !terminator_predicate(&self.peek_or(ErrorInternal::UnterminatedList)?.0) {
+            elements.push(self.parse_value()?.0);
         }
 
         assert!(terminator_predicate(
-            &self.expect_peek_or(Error::UnterminatedList)?.contents
+            &self.peek_or(ErrorInternal::UnterminatedList)?.0
         ));
 
-        Ok(Self::elements_to_list(elements))
+        ResultAt(Ok(Self::elements_to_list(elements)), at)
     }
 
-    fn parse_operator_list(&mut self) -> Result<Value> {
-        let first = self.parse_value()?;
+    fn parse_operator_list(&mut self, at: (usize, usize)) -> IResultAt<Value> {
+        let (first, _) = self.parse_value()?;
 
-        let operator = expect_match! { self,
+        let operator = expect_match!( self.next()?, {
             Token::Identifier(i) => i,
-        };
+        });
 
-        let second = self.parse_value()?;
+        let (second, _) = self.parse_value()?;
 
         let mut elements = vec![Value::Identifier(operator.clone()), first, second];
 
-        while self.expect_peek_or(Error::UnterminatedList)?.contents != Token::RBracket {
-            let next_operator = expect_match! { self,
+        while *self.peek_or(ErrorInternal::UnterminatedList)?.0 != Token::RBracket {
+            let (next, at) = self.next()?;
+            let next_operator = expect_match!( (next, at), {
                 Token::Identifier(i) => i,
-            };
+            });
 
             if next_operator != operator {
-                return Err(Error::MismatchedOperatorList(operator, next_operator));
+                return ResultAt(
+                    Err(ErrorInternal::MismatchedOperatorList(
+                        operator,
+                        next_operator,
+                    )),
+                    at,
+                );
             }
 
-            elements.push(self.parse_value()?);
+            elements.push(self.parse_value()?.0);
         }
 
-        expect_match! { self,
-            Token::RBracket => {},
-        };
+        expect_match!( self.next()?, {
+            Token::RBracket => (),
+        });
 
-        Ok(Self::elements_to_list(elements))
+        ResultAt(Ok(Self::elements_to_list(elements)), at)
     }
 
-    fn parse_form_list(&mut self) -> Result<Value> {
+    fn parse_form_list(&mut self, at: (usize, usize)) -> IResultAt<Value> {
         let mut lists = vec![];
 
-        while self.expect_peek_or(Error::UnterminatedList)?.contents != Token::RBrace {
-            let list = self.parse_list(|t| {
-                *t == Token::Comma || *t == Token::Newline || *t == Token::RBrace
-            })?;
+        while *self.peek_or(ErrorInternal::UnterminatedList)?.0 != Token::RBrace {
+            let (list, _) = self.parse_list(
+                |t| *t == Token::Comma || *t == Token::Newline || *t == Token::RBrace,
+                at,
+            )?;
 
             if list != Value::Nil {
                 lists.push(list);
             }
 
             self.input
-                .take_while_ungreedy(|t| {
-                    t.as_ref().map_or(false, |t| {
-                        t.contents == Token::Comma || t.contents == Token::Newline
-                    })
-                })
+                .items_while_successful_if(|t| *t == Token::Comma || *t == Token::Newline)
                 .for_each(drop);
         }
 
-        expect_match! { self,
-            Token::RBrace => {},
-        };
+        expect_match!( self.next()?, {
+            Token::RBrace => (),
+        });
 
-        Ok(Self::elements_to_list(lists))
+        ResultAt(Ok(Self::elements_to_list(lists)), at)
     }
 
-    pub fn parse_value(&mut self) -> Result<Value> {
-        expect_match! { self,
-            Token::Integer(i) => Ok(Value::Integer(i)),
-            Token::String(s) => Ok(Value::String(s)),
-            Token::Identifier(i) => Ok(Value::Identifier(i)),
-            Token::LParen => {
-                let result = self.parse_list(|t| *t == Token::RParen)?;
-                self.expect_next()?;
-                Ok(result)
-            },
-            Token::LBracket => self.parse_operator_list(),
-            Token::LBrace => self.parse_form_list(),
-            Token::Quote => Ok(Value::Quoted(Rc::new(self.parse_value()?))),
-        }
+    pub fn parse_value(&mut self) -> IResultAt<Value> {
+        self.next().and_then_at(|t, at| {
+            expect_match!( (t, at), {
+                Token::Integer(i) => ResultAt(Ok(Value::Integer(i)), at),
+                Token::String(s) => ResultAt(Ok(Value::String(s)), at),
+                Token::Identifier(i) => ResultAt(Ok(Value::Identifier(i)), at),
+                Token::LParen => {
+                    let (result, _) = self.parse_list(|t| *t == Token::RParen, at)?;
+                    self.next()?;
+                    ResultAt(Ok(result), at)
+                },
+                Token::LBracket => self.parse_operator_list(at),
+                Token::LBrace => self.parse_form_list(at),
+                Token::Quote => self.parse_value().map(|v| Value::Quoted(Rc::new(v))),
+            })
+        })
     }
 }
 
@@ -166,10 +214,14 @@ pub fn parse_value<I>(input: I) -> Result<Value>
 where
     I: IntoIterator<Item = char>,
 {
-    Parser {
-        input: tokenize(input.into_iter()).peekable(),
+    match (Parser {
+        input: tokenize(input.into_iter()),
     }
-    .parse_value()
+    .parse_value())
+    {
+        ResultAt(Ok(x), _) => Ok(x),
+        ResultAt(Err(e), at) => Err(Error::from_internal_at(e, at)),
+    }
 }
 
 #[cfg(test)]
@@ -183,7 +235,7 @@ mod tests {
 
     #[test]
     fn empty_parse_fails() -> Result<()> {
-        assert_err_matches_regex!(try_parse(""), "EOF");
+        assert_err_matches_regex!(try_parse(""), "Eof");
 
         Ok(())
     }
