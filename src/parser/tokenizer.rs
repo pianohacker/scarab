@@ -6,10 +6,7 @@
 
 use thiserror::Error;
 
-use result_at::{
-    label_chars, ResultAt, ResultAtCharReader, ResultAtCharReaderError, ResultAtInput,
-    ResultAtReader,
-};
+use result_at::{CharReaderError, CharSource, Reader, ResultAt, Source};
 
 #[derive(Clone, Error, Debug, Eq, PartialEq)]
 pub enum Error {
@@ -27,7 +24,7 @@ pub enum Error {
     #[error("EOF")]
     Eof {
         #[from]
-        source: ResultAtCharReaderError,
+        source: CharReaderError,
     },
 }
 
@@ -58,7 +55,7 @@ fn char_is_token_end(c: char) -> bool {
 }
 
 pub struct Tokenizer<I: Iterator<Item = char>> {
-    input: ResultAtInput<ResultAtCharReader<I>>,
+    input: Reader<CharSource<I>>,
     stopped: bool,
 }
 
@@ -128,14 +125,14 @@ where
     }
 }
 
-impl<I> ResultAtReader for Tokenizer<I>
+impl<I> Source for Tokenizer<I>
 where
     I: Iterator<Item = char>,
 {
     type Output = Token;
     type Error = Error;
 
-    fn read_with_position(&mut self) -> ResultAt<Token, Error> {
+    fn next(&mut self) -> ResultAt<Token, Error> {
         use Token::*;
 
         self.input
@@ -173,15 +170,15 @@ where
     }
 }
 
-pub fn tokenize<I>(input: I) -> ResultAtInput<Tokenizer<I::IntoIter>>
+pub fn tokenize<I>(input: I) -> Reader<Tokenizer<I::IntoIter>>
 where
     I: IntoIterator<Item = char>,
 {
     Tokenizer {
-        input: label_chars(input.into_iter()).with_positions(),
+        input: CharSource::new(input.into_iter()).reader(),
         stopped: false,
     }
-    .with_positions()
+    .reader()
 }
 
 #[cfg(test)]

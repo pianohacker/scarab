@@ -4,51 +4,72 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+//! Wrapper type for [Result] with line/column information; useful for parsers and tokenizers.
+//!
+//! Implementing tokenizers as an [`Iterator`] adapter has a few problems:
+//! * Each item needs position information, including errors. Embedding position information in
+//!   errors isn't enough, as successful reads from an upstream source might cause downstream
+//!   errors. For instance, a successfully read character might be an invalid character for a
+//!   tokenizer. This means the [`Iterator`] has to yield either something like `(Result, Position)` or `Result<ItemWithPosition, ErrorWithPosition>`.
+//! * Hitting the end of an iterator and hitting an error inside the iterator can often be handled
+//!   the same way, but doing this with either option is tedious.
+//! * Most syntaxes need the ability to peek ahead (during tokenizing and parsing).
+//!   [`Iterator::peekable()`] allows this, but adds another layer of complexity.
+//!
+//! The [`Source`] trait (along with the utility methods in [`Reader`]) manage this with minimal
+//! boilerplate.
 #![feature(try_trait_v2)]
 
 use thiserror::Error;
 
-pub trait ResultAtReader: Sized {
+/// The `Source` trait allows for reading items with position information.
+///
+/// Can be used directly with [`next()`](Self::next), but [`reader()`](Self::reader) allows use of many utility methods.
+pub trait Source: Sized {
     type Output;
     type Error: std::error::Error;
 
-    fn read_with_position(&mut self) -> ResultAt<Self::Output, Self::Error>;
+    fn next(&mut self) -> ResultAt<Self::Output, Self::Error>;
 
-    fn with_positions(self) -> ResultAtInput<Self> {
-        ResultAtInput {
+    fn reader(self) -> Reader<Self> {
+        Reader {
             reader: self,
             peeked: None,
         }
     }
 }
 
-pub fn label_chars<I: Iterator<Item = char>>(input: I) -> ResultAtCharReader<I> {
-    ResultAtCharReader {
-        input,
-        line: 1,
-        column: 1,
-    }
-}
-
-pub struct ResultAtCharReader<I: Iterator<Item = char>> {
+/// A [Source] that labels characters with line and column based on newlines.
+pub struct CharSource<I: Iterator<Item = char>> {
     input: I,
     line: usize,
     column: usize,
 }
 
+impl<I: Iterator<Item = char>> CharSource<I> {
+    pub fn new(input: I) -> Self {
+        Self {
+            input,
+            line: 1,
+            column: 1,
+        }
+    }
+}
+
+/// Errors produced by a [CharSource].
 #[derive(Copy, Clone, Error, Debug, PartialEq, Eq)]
-pub enum ResultAtCharReaderError {
+pub enum CharReaderError {
     #[error("EOF")]
     Eof,
 }
 
-impl<I: Iterator<Item = char>> ResultAtReader for ResultAtCharReader<I> {
+impl<I: Iterator<Item = char>> Source for CharSource<I> {
     type Output = char;
-    type Error = ResultAtCharReaderError;
+    type Error = CharReaderError;
 
-    fn read_with_position(&mut self) -> ResultAt<char, Self::Error> {
+    fn next(&mut self) -> ResultAt<char, Self::Error> {
         match self.input.next() {
-            None => ResultAt(Err(ResultAtCharReaderError::Eof), (self.line, self.column)),
+            None => ResultAt(Err(CharReaderError::Eof), (self.line, self.column)),
             Some(c) => {
                 let result = ResultAt(Ok(c), (self.line, self.column));
 
@@ -65,28 +86,33 @@ impl<I: Iterator<Item = char>> ResultAtReader for ResultAtCharReader<I> {
     }
 }
 
-pub struct ResultAtInput<R: ResultAtReader> {
-    reader: R,
-    peeked: Option<ResultAt<R::Output, R::Error>>,
+/// Utility wrapper around a [`Source`].
+pub struct Reader<S: Source> {
+    reader: S,
+    peeked: Option<ResultAt<S::Output, S::Error>>,
 }
 
-impl<R: ResultAtReader> ResultAtInput<R> {
-    pub fn next(&mut self) -> ResultAt<R::Output, R::Error> {
+impl<S: Source> Reader<S> {
+    /// Fetch the next result from the source.
+    ///
+    /// Will take the last peeked item, if any.
+    pub fn next(&mut self) -> ResultAt<S::Output, S::Error> {
         if let Some(x) = self.peeked.take() {
             return x;
         }
 
-        self.reader.read_with_position()
+        self.reader.next()
     }
 
-    pub fn peek(&mut self) -> &ResultAt<R::Output, R::Error> {
+    /// Peek at the next item without consuming it.
+    pub fn peek(&mut self) -> &ResultAt<S::Output, S::Error> {
         let reader = &mut self.reader;
 
-        self.peeked
-            .get_or_insert_with(|| reader.read_with_position())
+        self.peeked.get_or_insert_with(|| reader.next())
     }
 
-    pub fn items_while_successful(&mut self) -> impl Iterator<Item = R::Output> + '_ {
+    /// Returns an [`Iterator`] that yields all items up to the first error.
+    pub fn items_while_successful(&mut self) -> impl Iterator<Item = S::Output> + '_ {
         std::iter::from_fn(move || {
             if let ResultAt(Ok(_), _) = self.peek() {
                 return Some(self.next().0.unwrap());
@@ -96,10 +122,14 @@ impl<R: ResultAtReader> ResultAtInput<R> {
         })
     }
 
+    /// Returns an [`Iterator`] that yields all items up to the first error which also match the
+    /// given predicate.
+    ///
+    /// The final, non-matching item will not be consumed.
     pub fn items_while_successful_if<'a>(
         &'a mut self,
-        mut predicate: impl FnMut(&R::Output) -> bool + 'a,
-    ) -> impl Iterator<Item = R::Output> + 'a {
+        mut predicate: impl FnMut(&S::Output) -> bool + 'a,
+    ) -> impl Iterator<Item = S::Output> + 'a {
         std::iter::from_fn(move || {
             if let ResultAt(Ok(x), _) = self.peek() {
                 if (predicate)(&x) {
@@ -111,7 +141,8 @@ impl<R: ResultAtReader> ResultAtInput<R> {
         })
     }
 
-    pub fn iter(&mut self) -> impl Iterator<Item = ResultAt<R::Output, R::Error>> + '_ {
+    /// Returns an [`Iterator`] that yields all [`ResultAt`]s up to and including the first error.
+    pub fn iter(&mut self) -> impl Iterator<Item = ResultAt<S::Output, S::Error>> + '_ {
         let mut stopped = false;
 
         std::iter::from_fn(move || {
@@ -129,15 +160,25 @@ impl<R: ResultAtReader> ResultAtInput<R> {
         })
     }
 
-    pub fn iter_results(&mut self) -> impl Iterator<Item = Result<R::Output, R::Error>> + '_ {
+    /// Returns an [`Iterator`] that yields all [`Result`]s up to and including the first error.
+    pub fn iter_results(&mut self) -> impl Iterator<Item = Result<S::Output, S::Error>> + '_ {
         self.iter().map(|x| x.0)
     }
 }
 
+/// A [`Result`] with line/column position information.
+///
+/// Supports `?`, returning `(T, (usize, usize))` on success.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct ResultAt<T, E>(pub Result<T, E>, pub (usize, usize));
+pub struct ResultAt<T, E>(
+    /// The contained [`Result`].
+    pub Result<T, E>,
+    /// The line and column.
+    pub (usize, usize),
+);
 
 impl<T, E> ResultAt<T, E> {
+    /// Wraps [`Result::and_then()`] for the contained result.
     pub fn and_then<O, E2: From<E>>(self, op: impl FnOnce(T) -> Result<O, E2>) -> ResultAt<O, E2> {
         match self {
             Self(Ok(x), at) => ResultAt(op(x), at),
@@ -145,6 +186,8 @@ impl<T, E> ResultAt<T, E> {
         }
     }
 
+    /// Similar to [`and_then()`](Self::and_then), but passes the location to the closure and expects a
+    /// [`ResultAt`].
     pub fn and_then_at<O, E2: From<E>>(
         self,
         op: impl FnOnce(T, (usize, usize)) -> ResultAt<O, E2>,
@@ -155,6 +198,7 @@ impl<T, E> ResultAt<T, E> {
         }
     }
 
+    /// Wraps [`Result::as_ref()`] for the contained result.
     pub fn as_ref(&self) -> ResultAt<&T, &E> {
         match *self {
             Self(Ok(ref x), at) => ResultAt(Ok(x), at),
@@ -162,10 +206,12 @@ impl<T, E> ResultAt<T, E> {
         }
     }
 
+    /// Wraps [`Result::map()`] for the contained result.
     pub fn map<O>(self, op: impl FnOnce(T) -> O) -> ResultAt<O, E> {
         ResultAt(self.0.map(op), self.1)
     }
 
+    /// Wraps [`Result::map_err()`] for the contained result.
     pub fn map_err<O>(self, op: impl FnOnce(E) -> O) -> ResultAt<T, O> {
         ResultAt(self.0.map_err(op), self.1)
     }
@@ -229,27 +275,27 @@ mod tests {
         }
     }
 
-    struct TestReader {
+    struct TestSource {
         next: usize,
         fails_at: usize,
     }
 
-    fn test_reader() -> TestReader {
-        TestReader {
+    fn test_source() -> TestSource {
+        TestSource {
             next: 0,
             fails_at: usize::MAX,
         }
     }
 
-    fn test_reader_fails_at(fails_at: usize) -> TestReader {
-        TestReader { next: 0, fails_at }
+    fn test_source_fails_at(fails_at: usize) -> TestSource {
+        TestSource { next: 0, fails_at }
     }
 
-    impl ResultAtReader for TestReader {
+    impl Source for TestSource {
         type Output = usize;
         type Error = TestError;
 
-        fn read_with_position(&mut self) -> RA<Self::Output, Self::Error> {
+        fn next(&mut self) -> RA<Self::Output, Self::Error> {
             self.next += 1;
 
             if self.next == self.fails_at {
@@ -262,7 +308,7 @@ mod tests {
 
     #[test]
     fn input_next_gives_peeked() {
-        let mut input = test_reader().with_positions();
+        let mut input = test_source().reader();
 
         assert_eq!(input.next(), RA(Ok(1), (0, 1)));
         assert_eq!(input.peek(), &RA(Ok(2), (0, 2)));
@@ -272,10 +318,7 @@ mod tests {
     #[test]
     fn iter_gives_result_ats() {
         assert_eq!(
-            test_reader_fails_at(4)
-                .with_positions()
-                .iter()
-                .collect::<Vec<_>>(),
+            test_source_fails_at(4).reader().iter().collect::<Vec<_>>(),
             vec![
                 RA(Ok(1), (0, 1)),
                 RA(Ok(2), (0, 2)),
@@ -288,8 +331,8 @@ mod tests {
     #[test]
     fn iter_results_gives_inner_results() {
         assert_eq!(
-            test_reader_fails_at(4)
-                .with_positions()
+            test_source_fails_at(4)
+                .reader()
                 .iter_results()
                 .collect::<Vec<_>>(),
             vec![Ok(1), Ok(2), Ok(3), Err(TestError {})]
@@ -299,8 +342,8 @@ mod tests {
     #[test]
     fn items_while_successful_gives_inner_values() {
         assert_eq!(
-            test_reader_fails_at(4)
-                .with_positions()
+            test_source_fails_at(4)
+                .reader()
                 .items_while_successful()
                 .collect::<Vec<_>>(),
             vec![1, 2, 3]
@@ -310,8 +353,8 @@ mod tests {
     #[test]
     fn items_while_successful_if_gives_inner_values() {
         assert_eq!(
-            test_reader_fails_at(4)
-                .with_positions()
+            test_source_fails_at(4)
+                .reader()
                 .items_while_successful_if(|x| *x < 3)
                 .collect::<Vec<_>>(),
             vec![1, 2]
@@ -320,7 +363,7 @@ mod tests {
 
     #[test]
     fn items_while_successful_if_leaves_peeked() {
-        let mut input = test_reader_fails_at(4).with_positions();
+        let mut input = test_source_fails_at(4).reader();
         input.items_while_successful_if(|x| *x < 3).for_each(drop);
 
         assert_eq!(input.next(), RA(Ok(3), (0, 3)));
@@ -330,7 +373,7 @@ mod tests {
     fn try_gives_contents_on_success() {
         assert_eq!(
             (|| {
-                let (val, at) = test_reader_fails_at(2).with_positions().next()?;
+                let (val, at) = test_source_fails_at(2).reader().next()?;
 
                 ResultAt::<_, TestError>(Ok(format!("-> {}", val)), at)
             })(),
@@ -342,7 +385,7 @@ mod tests {
     fn try_gives_result_at_on_failure() {
         assert_eq!(
             (|| -> ResultAt<(), TestError> {
-                test_reader_fails_at(1).with_positions().next()?;
+                test_source_fails_at(1).reader().next()?;
 
                 panic!();
             })(),

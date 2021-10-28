@@ -12,7 +12,7 @@ use thiserror::Error;
 
 use self::tokenizer::{tokenize, Token, Tokenizer};
 use crate::value::Value;
-use result_at::{ResultAt, ResultAtInput};
+use result_at::{Reader, ResultAt};
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum ErrorInternal {
@@ -73,7 +73,7 @@ type Result<T> = std::result::Result<T, Error>;
 type IResultAt<T> = ResultAt<T, ErrorInternal>;
 
 pub struct Parser<I: Iterator<Item = char>> {
-    input: ResultAtInput<Tokenizer<I>>,
+    input: Reader<Tokenizer<I>>,
 }
 
 macro_rules! expect_match {
