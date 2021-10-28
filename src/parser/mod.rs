@@ -70,7 +70,15 @@ impl std::fmt::Display for Error {
 }
 
 type Result<T> = std::result::Result<T, Error>;
+type IResult<T> = std::result::Result<T, ErrorInternal>;
 type IResultAt<T> = ResultAt<T, ErrorInternal>;
+
+fn result_from_result_at<T>(result_at: IResultAt<T>) -> Result<T> {
+    match result_at {
+        ResultAt(Ok(x), _) => Ok(x),
+        ResultAt(Err(e), at) => Err(Error::from_internal_at(e, at)),
+    }
+}
 
 pub struct Parser<I: Iterator<Item = char>> {
     input: Reader<Tokenizer<I>>,
@@ -101,7 +109,11 @@ impl<I: Iterator<Item = char>> Parser<I> {
     }
 
     fn next(&mut self) -> IResultAt<Token> {
-        self.input.next().map_err(|e| ErrorInternal::from(e))
+        self.input.next().map_err(|e| e.into())
+    }
+
+    fn peek(&mut self) -> ResultAt<&Token, ErrorInternal> {
+        self.input.peek().as_ref().map_err(|e| e.clone().into())
     }
 
     fn peek_or(&mut self, error: ErrorInternal) -> ResultAt<&Token, ErrorInternal> {
@@ -113,18 +125,24 @@ impl<I: Iterator<Item = char>> Parser<I> {
 
     fn parse_list(
         &mut self,
-        terminator_predicate: impl Fn(&Token) -> bool,
+        terminator_predicate: impl Fn(IResult<&Token>) -> IResult<bool>,
         at: (usize, usize),
     ) -> IResultAt<Value> {
         let mut elements = vec![];
 
-        while !terminator_predicate(&self.peek_or(ErrorInternal::UnterminatedList)?.0) {
+        loop {
+            let ResultAt(result, at) = self.peek();
+
+            if ResultAt(
+                terminator_predicate(result).map_err(|_| ErrorInternal::UnterminatedList),
+                at,
+            )?
+            .0
+            {
+                break;
+            }
             elements.push(self.parse_value()?.0);
         }
-
-        assert!(terminator_predicate(
-            &self.peek_or(ErrorInternal::UnterminatedList)?.0
-        ));
 
         ResultAt(Ok(Self::elements_to_list(elements)), at)
     }
@@ -166,27 +184,73 @@ impl<I: Iterator<Item = char>> Parser<I> {
         ResultAt(Ok(Self::elements_to_list(elements)), at)
     }
 
-    fn parse_form_list(&mut self, at: (usize, usize)) -> IResultAt<Value> {
+    fn parse_form_list_item(
+        &mut self,
+        terminator_predicate: impl Fn(IResult<&Token>) -> IResult<bool>,
+        at: (usize, usize),
+    ) -> IResultAt<Value> {
+        let (list, _) = self.parse_list(terminator_predicate, at)?;
+
+        self.input
+            .items_while_successful_if(|t| *t == Token::Comma || *t == Token::Newline)
+            .for_each(drop);
+
+        ResultAt(Ok(list), at)
+    }
+
+    fn parse_form_list(&mut self, mut at: (usize, usize)) -> IResultAt<Value> {
         let mut lists = vec![];
 
-        while *self.peek_or(ErrorInternal::UnterminatedList)?.0 != Token::RBrace {
-            let (list, _) = self.parse_list(
-                |t| *t == Token::Comma || *t == Token::Newline || *t == Token::RBrace,
+        loop {
+            let (next, next_at) = self.peek_or(ErrorInternal::UnterminatedList)?;
+            if *next == Token::RBrace {
+                break;
+            }
+
+            let (list, _) = self.parse_form_list_item(
+                |t| t.map(|t| *t == Token::Comma || *t == Token::Newline || *t == Token::RBrace),
                 at,
             )?;
-
             if list != Value::Nil {
                 lists.push(list);
             }
 
-            self.input
-                .items_while_successful_if(|t| *t == Token::Comma || *t == Token::Newline)
-                .for_each(drop);
+            at = next_at;
         }
 
         expect_match!( self.next()?, {
             Token::RBrace => (),
         });
+
+        ResultAt(Ok(Self::elements_to_list(lists)), at)
+    }
+
+    pub fn parse_implicit_form_list(&mut self) -> IResultAt<Value> {
+        let mut lists = vec![];
+        let mut at = (1, 1);
+
+        loop {
+            let next_at = match self.input.peek() {
+                ResultAt(Ok(_), at) => at,
+                ResultAt(Err(tokenizer::Error::Eof { .. }), _) => break,
+                ResultAt(Err(e), at) => return ResultAt(Err(e.clone().into()), *at),
+            };
+            at = *next_at;
+
+            let (list, _) = self.parse_form_list_item(
+                |t| match t {
+                    Ok(t) => Ok(*t == Token::Comma || *t == Token::Newline || *t == Token::RBrace),
+                    Err(ErrorInternal::Tokenize {
+                        source: tokenizer::Error::Eof { .. },
+                    }) => Ok(true),
+                    Err(e) => Err(e),
+                },
+                at,
+            )?;
+            if list != Value::Nil {
+                lists.push(list);
+            }
+        }
 
         ResultAt(Ok(Self::elements_to_list(lists)), at)
     }
@@ -198,7 +262,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
                 Token::String(s) => ResultAt(Ok(Value::String(s)), at),
                 Token::Identifier(i) => ResultAt(Ok(Value::Identifier(i)), at),
                 Token::LParen => {
-                    let (result, _) = self.parse_list(|t| *t == Token::RParen, at)?;
+                    let (result, _) = self.parse_list(|t| t.map(|t| *t == Token::RParen), at)?;
                     self.next()?;
                     ResultAt(Ok(result), at)
                 },
@@ -214,14 +278,24 @@ pub fn parse_value<I>(input: I) -> Result<Value>
 where
     I: IntoIterator<Item = char>,
 {
-    match (Parser {
-        input: tokenize(input.into_iter()),
-    }
-    .parse_value())
-    {
-        ResultAt(Ok(x), _) => Ok(x),
-        ResultAt(Err(e), at) => Err(Error::from_internal_at(e, at)),
-    }
+    result_from_result_at(
+        Parser {
+            input: tokenize(input.into_iter()),
+        }
+        .parse_value(),
+    )
+}
+
+pub fn parse_implicit_form_list<I>(input: I) -> Result<Value>
+where
+    I: IntoIterator<Item = char>,
+{
+    result_from_result_at(
+        Parser {
+            input: tokenize(input.into_iter()),
+        }
+        .parse_implicit_form_list(),
+    )
 }
 
 #[cfg(test)]
@@ -564,6 +638,19 @@ Cell(
     fn tokenize_errors_passed_through() -> Result<()> {
         assert_err_matches_regex!(try_parse("\"abc"), "Tokenize.*String");
         assert_err_matches_regex!(try_parse("(\"abc"), "Tokenize.*String");
+
+        Ok(())
+    }
+
+    #[test]
+    fn multi_line_implicit_form_list() -> Result<()> {
+        snapshot!(parse_implicit_form_list(
+            "
+                d c 1
+                e f \"yo\"
+            "
+            .chars()
+        )?);
 
         Ok(())
     }

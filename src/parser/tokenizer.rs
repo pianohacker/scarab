@@ -28,7 +28,7 @@ pub enum Error {
     },
 }
 
-type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Token {
