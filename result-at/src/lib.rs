@@ -39,6 +39,23 @@ pub trait Source: Sized {
     }
 }
 
+/// The `Source` trait allows for reading items with position information.
+///
+/// Can be used directly with [`next()`](Self::next), but [`reader()`](Self::reader) allows use of many utility methods.
+pub trait Source2: Sized {
+    type Output;
+    type Error: std::error::Error;
+
+    fn next(&mut self) -> ResultAt2<Self::Output, Self::Error>;
+
+    fn reader(self) -> Reader2<Self> {
+        Reader2 {
+            reader: self,
+            peeked: None,
+        }
+    }
+}
+
 /// A [Source] that labels characters with line and column based on newlines.
 pub struct CharSource<I: Iterator<Item = char>> {
     input: I,
@@ -166,6 +183,90 @@ impl<S: Source> Reader<S> {
     }
 }
 
+/// Utility wrapper around a [`Source`].
+pub struct Reader2<S: Source2> {
+    reader: S,
+    peeked: Option<ResultAt2<S::Output, S::Error>>,
+}
+
+impl<S: Source2> Reader2<S> {
+    /// Fetch the next result from the source.
+    ///
+    /// Will take the last peeked item, if any.
+    pub fn next(&mut self) -> ResultAt2<S::Output, S::Error> {
+        if let Some(x) = self.peeked.take() {
+            return x;
+        }
+
+        self.reader.next()
+    }
+
+    /// Peek at the next item without consuming it.
+    pub fn peek(&mut self) -> &ResultAt2<S::Output, S::Error> {
+        let reader = &mut self.reader;
+
+        self.peeked.get_or_insert_with(|| reader.next())
+    }
+
+    /// Returns an [`Iterator`] that yields all items up to the first error or `NoneAt`.
+    pub fn items_while_successful(&mut self) -> impl Iterator<Item = S::Output> + '_ {
+        std::iter::from_fn(move || {
+            if let OkAt(_, _) = self.peek() {
+                return Some(self.next().unwrap().0);
+            }
+
+            None
+        })
+    }
+
+    /// Returns an [`Iterator`] that yields all items up to the first error which also match the
+    /// given predicate.
+    ///
+    /// The final, non-matching item will not be consumed.
+    pub fn items_while_successful_if<'a>(
+        &'a mut self,
+        mut predicate: impl FnMut(&S::Output) -> bool + 'a,
+    ) -> impl Iterator<Item = S::Output> + 'a {
+        std::iter::from_fn(move || {
+            if let OkAt(x, _) = self.peek() {
+                if (predicate)(&x) {
+                    return Some(self.next().unwrap().0);
+                }
+            }
+
+            None
+        })
+    }
+
+    /// Returns an [`Iterator`] that yields all [`ResultAt2`]s up to and including the first `ErrAt` or `NoneAt`.
+    pub fn iter(&mut self) -> impl Iterator<Item = ResultAt2<S::Output, S::Error>> + '_ {
+        let mut stopped = false;
+
+        std::iter::from_fn(move || {
+            if stopped {
+                return None;
+            }
+
+            match self.next() {
+                result @ OkAt(_, _) => Some(result),
+                result @ (ErrAt(_, _) | NoneAt(_)) => {
+                    stopped = true;
+                    Some(result)
+                }
+            }
+        })
+    }
+
+    /// Returns an [`Iterator`] that yields all [`Result`]s up to the first ErrAt or NoneAt.
+    pub fn iter_results(&mut self) -> impl Iterator<Item = Result<S::Output, S::Error>> + '_ {
+        self.iter().filter_map(|r| match r {
+            OkAt(x, _) => Some(Ok(x)),
+            ErrAt(e, _) => Some(Err(e)),
+            NoneAt(_) => None,
+        })
+    }
+}
+
 /// A [`Result`] with line/column position information.
 ///
 /// Supports `?`, returning `(T, (usize, usize))` on success.
@@ -217,6 +318,81 @@ impl<T, E> ResultAt<T, E> {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ResultAt2<T, E> {
+    OkAt(T, (usize, usize)),
+    ErrAt(E, (usize, usize)),
+    NoneAt((usize, usize)),
+}
+
+use ResultAt2::*;
+
+impl<T, E: std::fmt::Debug> ResultAt2<T, E> {
+    /// Wraps [`Result::and_then()`] for the contained result.
+    pub fn and_then<O, E2: From<E>>(self, op: impl FnOnce(T) -> Result<O, E2>) -> ResultAt2<O, E2> {
+        match self {
+            OkAt(x, at) => match op(x) {
+                Ok(x) => OkAt(x, at),
+                Err(e) => ErrAt(e, at),
+            },
+            ErrAt(e, at) => ErrAt(e.into(), at),
+            NoneAt(at) => NoneAt(at),
+        }
+    }
+
+    /// Similar to [`and_then()`](Self::and_then), but passes the location to the closure and expects a
+    /// [`ResultAt`].
+    pub fn and_then_at<O, E2: From<E>>(
+        self,
+        op: impl FnOnce(T, (usize, usize)) -> ResultAt2<O, E2>,
+    ) -> ResultAt2<O, E2> {
+        match self {
+            OkAt(x, at) => op(x, at),
+            ErrAt(e, at) => ErrAt(e.into(), at),
+            NoneAt(at) => NoneAt(at),
+        }
+    }
+
+    /// Wraps [`Result::as_ref()`] for the contained result.
+    pub fn as_ref(&self) -> ResultAt2<&T, &E> {
+        match *self {
+            OkAt(ref x, at) => OkAt(x, at),
+            ErrAt(ref e, at) => ErrAt(e, at),
+            NoneAt(at) => NoneAt(at),
+        }
+    }
+
+    /// Wraps [`Result::map()`] for the contained result.
+    pub fn map<O>(self, op: impl FnOnce(T) -> O) -> ResultAt2<O, E> {
+        match self {
+            OkAt(x, at) => OkAt(op(x), at),
+            ErrAt(e, at) => ErrAt(e, at),
+            NoneAt(at) => NoneAt(at),
+        }
+    }
+
+    /// Wraps [`Result::map_err()`] for the contained result.
+    pub fn map_err<O>(self, op: impl FnOnce(E) -> O) -> ResultAt2<T, O> {
+        match self {
+            OkAt(x, at) => OkAt(x, at),
+            ErrAt(e, at) => ErrAt(op(e), at),
+            NoneAt(at) => NoneAt(at),
+        }
+    }
+
+    /// Returns the contained `OkAt` value and position or panics.
+    pub fn unwrap(self) -> (T, (usize, usize)) {
+        match self {
+            OkAt(x, at) => (x, at),
+            ErrAt(e, at) => panic!(
+                "called unwrap on a ResultAt containing ErrAt({:?}, {:?})",
+                e, at
+            ),
+            NoneAt(at) => panic!("called unwrap on a ResultAt containing NoneAt({:?})", at),
+        }
+    }
+}
+
 impl<T, E: From<E2>, E2> std::ops::FromResidual<ResultAt<std::convert::Infallible, E2>>
     for ResultAt<T, E>
 {
@@ -239,6 +415,37 @@ impl<T, E> std::ops::Try for ResultAt<T, E> {
         match self {
             ResultAt(Ok(x), at) => std::ops::ControlFlow::Continue((x, at)),
             ResultAt(Err(e), at) => std::ops::ControlFlow::Break(ResultAt(Err(e), at)),
+        }
+    }
+}
+
+impl<T, E: From<E2>, E2> std::ops::FromResidual<ResultAt2<std::convert::Infallible, E2>>
+    for ResultAt2<T, E>
+{
+    fn from_residual(residual: ResultAt2<std::convert::Infallible, E2>) -> Self {
+        match residual {
+            OkAt(_, _) => unreachable!(),
+            ErrAt(e, at) => ErrAt(e.into(), at),
+            NoneAt(at) => NoneAt(at),
+        }
+    }
+}
+
+impl<T, E> std::ops::Try for ResultAt2<T, E> {
+    type Output = (T, (usize, usize));
+    type Residual = ResultAt2<std::convert::Infallible, E>;
+
+    fn from_output(output: Self::Output) -> Self {
+        let (x, at) = output;
+
+        OkAt(x, at)
+    }
+
+    fn branch(self) -> std::ops::ControlFlow<Self::Residual, Self::Output> {
+        match self {
+            OkAt(x, at) => std::ops::ControlFlow::Continue((x, at)),
+            ErrAt(e, at) => std::ops::ControlFlow::Break(ErrAt(e, at)),
+            NoneAt(at) => std::ops::ControlFlow::Break(NoneAt(at)),
         }
     }
 }
@@ -402,6 +609,203 @@ mod tests {
                 panic!();
             })(),
             RA(Err(TestError {}), (1, 0))
+        );
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+    struct Test2Error {}
+
+    impl std::error::Error for Test2Error {}
+
+    impl std::fmt::Display for Test2Error {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "test error")
+        }
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+    struct Test2Error2 {}
+
+    impl std::error::Error for Test2Error2 {}
+
+    impl std::fmt::Display for Test2Error2 {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "test error")
+        }
+    }
+
+    impl From<Test2Error2> for Test2Error {
+        fn from(_: Test2Error2) -> Test2Error {
+            Test2Error {}
+        }
+    }
+
+    struct Test2Source {
+        next: usize,
+        fails_at: usize,
+        ends_at: usize,
+    }
+
+    fn test2_source() -> Test2Source {
+        Test2Source {
+            next: 0,
+            fails_at: usize::MAX,
+            ends_at: usize::MAX,
+        }
+    }
+
+    fn test2_source_fails_at(fails_at: usize) -> Test2Source {
+        Test2Source {
+            next: 0,
+            fails_at,
+            ends_at: fails_at + 1,
+        }
+    }
+
+    fn test2_source_ends_at(ends_at: usize) -> Test2Source {
+        Test2Source {
+            next: 0,
+            fails_at: usize::MAX,
+            ends_at,
+        }
+    }
+
+    impl Source2 for Test2Source {
+        type Output = usize;
+        type Error = Test2Error;
+
+        fn next(&mut self) -> ResultAt2<Self::Output, Self::Error> {
+            self.next += 1;
+
+            if self.next == self.fails_at {
+                ErrAt(Test2Error {}, (0, self.next))
+            } else if self.next == self.ends_at {
+                NoneAt((0, self.next))
+            } else {
+                OkAt(self.next, (0, self.next))
+            }
+        }
+    }
+
+    #[test]
+    fn input_next_gives_peeked2() {
+        let mut input = test2_source().reader();
+
+        assert_eq!(input.next(), OkAt(1, (0, 1)));
+        assert_eq!(input.peek(), &OkAt(2, (0, 2)));
+        assert_eq!(input.next(), OkAt(2, (0, 2)));
+    }
+
+    #[test]
+    fn iter_gives_result_ats2() {
+        assert_eq!(
+            test2_source_fails_at(4).reader().iter().collect::<Vec<_>>(),
+            vec![
+                OkAt(1, (0, 1)),
+                OkAt(2, (0, 2)),
+                OkAt(3, (0, 3)),
+                ErrAt(Test2Error {}, (0, 4)),
+            ]
+        );
+
+        assert_eq!(
+            test2_source_ends_at(4).reader().iter().collect::<Vec<_>>(),
+            vec![
+                OkAt(1, (0, 1)),
+                OkAt(2, (0, 2)),
+                OkAt(3, (0, 3)),
+                NoneAt((0, 4))
+            ]
+        );
+    }
+
+    #[test]
+    fn iter_results_gives_inner_results2() {
+        assert_eq!(
+            test2_source_fails_at(4)
+                .reader()
+                .iter_results()
+                .collect::<Vec<_>>(),
+            vec![Ok(1), Ok(2), Ok(3), Err(Test2Error {})]
+        );
+
+        assert_eq!(
+            test2_source_ends_at(4)
+                .reader()
+                .iter_results()
+                .collect::<Vec<_>>(),
+            vec![Ok(1), Ok(2), Ok(3)]
+        );
+    }
+
+    #[test]
+    fn items_while_successful_gives_inner_values2() {
+        assert_eq!(
+            test2_source_fails_at(4)
+                .reader()
+                .items_while_successful()
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn items_while_successful_if_gives_inner_values2() {
+        assert_eq!(
+            test2_source_fails_at(4)
+                .reader()
+                .items_while_successful_if(|x| *x < 3)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn items_while_successful_if_leaves_peeked2() {
+        let mut input = test2_source_fails_at(4).reader();
+        input.items_while_successful_if(|x| *x < 3).for_each(drop);
+
+        assert_eq!(input.next(), OkAt(3, (0, 3)));
+    }
+
+    #[test]
+    fn try_gives_contents_on_success2() {
+        assert_eq!(
+            (|| { OkAt::<_, Test2Error>(test2_source().reader().next()?, (0, 1)) })(),
+            OkAt((1, (0, 1)), (0, 1))
+        );
+    }
+
+    #[test]
+    fn try_gives_result_at_on_failure2() {
+        assert_eq!(
+            (|| -> ResultAt2<(), Test2Error> {
+                test2_source_fails_at(1).reader().next()?;
+
+                panic!();
+            })(),
+            ErrAt(Test2Error {}, (0, 1))
+        );
+
+        assert_eq!(
+            (|| -> ResultAt2<(), Test2Error> {
+                test2_source_ends_at(1).reader().next()?;
+
+                panic!();
+            })(),
+            NoneAt((0, 1))
+        );
+    }
+
+    #[test]
+    fn try_can_convert_error_on_failure2() {
+        assert_eq!(
+            (|| -> ResultAt<(), Test2Error> {
+                ResultAt::<(), _>(Err(Test2Error2 {}), (1, 0))?;
+
+                panic!();
+            })(),
+            RA(Err(Test2Error {}), (1, 0))
         );
     }
 }

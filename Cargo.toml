@@ -16,6 +16,3 @@ members = [
 	".",
 	"result-at"
 ]
-default-members = [
-	".",
-]
