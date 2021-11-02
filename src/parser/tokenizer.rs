@@ -6,7 +6,7 @@
 
 use thiserror::Error;
 
-use result_at::{CharReaderError, CharSource, Reader, ResultAt, Source};
+use result_at::{CharReaderError, CharSource, Reader, ResultAt::*, Source};
 
 #[derive(Clone, Error, Debug, Eq, PartialEq)]
 pub enum Error {
@@ -28,7 +28,13 @@ pub enum Error {
     },
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+impl From<&CharReaderError> for Error {
+    fn from(e: &CharReaderError) -> Error {
+        Error::Eof { source: *e }
+    }
+}
+
+pub type ResultAt<T> = result_at::ResultAt<T, Error>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Token {
@@ -63,32 +69,33 @@ impl<I> Tokenizer<I>
 where
     I: Iterator<Item = char>,
 {
-    fn tokenize_string(&mut self) -> Result<String> {
+    fn tokenize_string(&mut self, at: (usize, usize)) -> ResultAt<Token> {
         let result = self
             .input
             .items_while_successful_if(|x| *x != '\"')
             .collect();
 
-        if let ResultAt(Err(_), _) = self.input.next() {
-            return Err(Error::UnterminatedString);
-        }
+        self.input.next().none_as_err(Error::UnterminatedString)?;
 
-        Ok(result)
+        OkAt(Token::String(result), at)
     }
 
-    fn tokenize_identifier(&mut self, first_char: char) -> Result<String> {
-        Ok(std::iter::once(first_char)
-            .chain(
-                self.input.items_while_successful_if(|x| {
-                    !char_is_token_end(*x) && !x.is_ascii_whitespace()
-                }),
-            )
-            .collect())
+    fn tokenize_identifier(&mut self, first_char: char, at: (usize, usize)) -> ResultAt<Token> {
+        OkAt(
+            Token::Identifier(
+                std::iter::once(first_char)
+                    .chain(self.input.items_while_successful_if(|x| {
+                        !char_is_token_end(*x) && !x.is_ascii_whitespace()
+                    }))
+                    .collect(),
+            ),
+            at,
+        )
     }
 
-    fn tokenize_integer(&mut self, mut first_char: char) -> Result<isize> {
+    fn tokenize_integer(&mut self, mut first_char: char, at: (usize, usize)) -> ResultAt<Token> {
         let sign = if first_char == '-' {
-            first_char = self.input.next().0.unwrap_or_else(|_| unreachable!());
+            first_char = self.input.next().unwrap().0;
             -1
         } else {
             1
@@ -97,16 +104,16 @@ where
         let mut base = 10;
 
         if first_char == '0' {
-            match self.input.peek() {
-                ResultAt(Ok('b'), _) => {
+            match self.input.peek().as_ref()? {
+                ('b', _) => {
                     base = 2;
-                    self.input.next().0.map_err(|_| Error::InvalidInteger)?;
-                    first_char = self.input.next().0.map_err(|_| Error::InvalidInteger)?;
+                    self.input.next().none_as_err(Error::InvalidInteger)?;
+                    first_char = self.input.next().none_as_err(Error::InvalidInteger)?.0;
                 }
-                ResultAt(Ok('x'), _) => {
+                ('x', _) => {
                     base = 16;
-                    self.input.next().0.map_err(|_| Error::InvalidInteger)?;
-                    first_char = self.input.next().0.map_err(|_| Error::InvalidInteger)?;
+                    self.input.next().none_as_err(Error::InvalidInteger)?;
+                    first_char = self.input.next().none_as_err(Error::InvalidInteger)?.0;
                 }
                 _ => {}
             }
@@ -119,9 +126,10 @@ where
             )
             .collect::<String>();
 
-        isize::from_str_radix(&s, base)
-            .map(|x| x * sign)
-            .map_err(|e| e.into())
+        ResultAt::from_result(
+            isize::from_str_radix(&s, base).map(|x| Token::Integer(x * sign)),
+            at,
+        )
     }
 }
 
@@ -132,7 +140,7 @@ where
     type Output = Token;
     type Error = Error;
 
-    fn next(&mut self) -> ResultAt<Token, Error> {
+    fn next(&mut self) -> ResultAt<Token> {
         use Token::*;
 
         self.input
@@ -143,26 +151,26 @@ where
             .input
             .next()
             .map_err(Error::from)
-            .and_then(|c| match c {
-                '(' => Ok(LParen),
-                ')' => Ok(RParen),
-                '[' => Ok(LBracket),
-                ']' => Ok(RBracket),
-                '{' => Ok(LBrace),
-                '}' => Ok(RBrace),
-                '\'' => Ok(Quote),
-                '\n' => Ok(Newline),
-                ',' => Ok(Comma),
-                '"' => Ok(String(self.tokenize_string()?)),
-                _ if c.is_ascii_digit() => Ok(Integer(self.tokenize_integer(c)?)),
-                '-' if self.input.peek().0.map_or(false, |c2| c2.is_ascii_digit()) => {
-                    Ok(Integer(self.tokenize_integer(c)?))
+            .and_then_at(|c, at| match c {
+                '(' => OkAt(LParen, at),
+                ')' => OkAt(RParen, at),
+                '[' => OkAt(LBracket, at),
+                ']' => OkAt(RBracket, at),
+                '{' => OkAt(LBrace, at),
+                '}' => OkAt(RBrace, at),
+                '\'' => OkAt(Quote, at),
+                '\n' => OkAt(Newline, at),
+                ',' => OkAt(Comma, at),
+                '"' => self.tokenize_string(at),
+                _ if c.is_ascii_digit() => self.tokenize_integer(c, at),
+                '-' if self.input.peek().map_or(false, |c2| c2.is_ascii_digit()) => {
+                    self.tokenize_integer(c, at)
                 }
-                _ if !c.is_control() => Ok(Identifier(self.tokenize_identifier(c)?)),
-                _ => Err(Error::UnexpectedChar(c)),
+                _ if !c.is_control() => self.tokenize_identifier(c, at),
+                _ => ErrAt(Error::UnexpectedChar(c), at),
             });
 
-        if let ResultAt(Err(_), _) = result {
+        if let ErrAt(_, _) = result {
             self.stopped = true;
         }
 
@@ -185,6 +193,7 @@ where
 mod tests {
     use super::*;
     use k9::{assert_err_matches_regex, snapshot};
+    type Result<T> = std::result::Result<T, Error>;
 
     fn try_tokenize(input: &str) -> Result<Vec<Token>> {
         tokenize(input.chars())
@@ -200,7 +209,7 @@ mod tests {
         tokenize(input.chars()).iter_results().collect()
     }
 
-    fn try_tokenize_full(input: &str) -> Vec<ResultAt<Token, Error>> {
+    fn try_tokenize_full(input: &str) -> Vec<ResultAt<Token>> {
         tokenize(input.chars()).iter().collect()
     }
 
@@ -390,11 +399,6 @@ mod tests {
             -1917,
         ),
     ),
-    Err(
-        Eof {
-            source: Eof,
-        },
-    ),
 ]
 "
         );
@@ -435,117 +439,90 @@ mod tests {
             ),
             r#"
 [
-    ResultAt(
-        Ok(
-            Integer(
-                1234,
-            ),
+    OkAt(
+        Integer(
+            1234,
         ),
         (
             1,
             1,
         ),
     ),
-    ResultAt(
-        Ok(
-            Newline,
-        ),
+    OkAt(
+        Newline,
         (
             1,
             5,
         ),
     ),
-    ResultAt(
-        Ok(
-            LParen,
-        ),
+    OkAt(
+        LParen,
         (
             2,
             1,
         ),
     ),
-    ResultAt(
-        Ok(
-            Newline,
-        ),
+    OkAt(
+        Newline,
         (
             2,
             2,
         ),
     ),
-    ResultAt(
-        Ok(
-            LParen,
-        ),
+    OkAt(
+        LParen,
         (
             3,
             2,
         ),
     ),
-    ResultAt(
-        Ok(
-            Integer(
-                456,
-            ),
+    OkAt(
+        Integer(
+            456,
         ),
         (
             3,
             4,
         ),
     ),
-    ResultAt(
-        Ok(
-            RParen,
-        ),
+    OkAt(
+        RParen,
         (
             3,
             8,
         ),
     ),
-    ResultAt(
-        Ok(
-            Newline,
-        ),
+    OkAt(
+        Newline,
         (
             3,
             9,
         ),
     ),
-    ResultAt(
-        Ok(
-            LBracket,
-        ),
+    OkAt(
+        LBracket,
         (
             4,
             3,
         ),
     ),
-    ResultAt(
-        Ok(
-            String(
-                "abc",
-            ),
+    OkAt(
+        String(
+            "abc",
         ),
         (
             4,
             4,
         ),
     ),
-    ResultAt(
-        Ok(
-            RParen,
-        ),
+    OkAt(
+        RParen,
         (
             4,
             9,
         ),
     ),
-    ResultAt(
-        Err(
-            Eof {
-                source: Eof,
-            },
-        ),
+    NoneAt(
         (
             4,
             10,

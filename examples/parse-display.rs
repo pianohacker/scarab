@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use scarab::parser::parse_value;
+use scarab::parser::parse_implicit_form_list;
 
 use std::io::{self, Write};
 
@@ -21,7 +21,7 @@ fn main() {
             break;
         }
 
-        match parse_value(line.chars()) {
+        match parse_implicit_form_list(line.chars()) {
             Ok(value) => println!("{}", value),
             Err(e) => println!("parsing failed: {}", e),
         }

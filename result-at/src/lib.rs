@@ -246,6 +246,49 @@ impl<T, E: std::fmt::Debug> ResultAt<T, E> {
             NoneAt(at) => panic!("called unwrap on a ResultAt containing NoneAt({:?})", at),
         }
     }
+
+    /// Unfolds into a `Result<Option<T>, E>`, dropping position information.
+    pub fn unfold_contents(self) -> Result<Option<T>, E> {
+        match self {
+            OkAt(x, _) => Ok(Some(x)),
+            ErrAt(e, _) => Err(e),
+            NoneAt(_) => Ok(None),
+        }
+    }
+
+    /// Returns an ok/erroring `ResultAt` from the given `Result` with the given position.
+    pub fn from_result<E2: Into<E>>(result: Result<T, E2>, at: (usize, usize)) -> Self {
+        match result {
+            Ok(x) => OkAt(x, at),
+            Err(e) => ErrAt(e.into(), at),
+        }
+    }
+
+    /// Maps `NoneAt` to the given value.
+    pub fn none_as_value(self, default: T) -> Self {
+        match self {
+            result @ (OkAt(_, _) | ErrAt(_, _)) => result,
+            NoneAt(at) => OkAt(default, at),
+        }
+    }
+
+    /// Maps `NoneAt` to the given error.
+    pub fn none_as_err<E2: From<E>>(self, e: E2) -> ResultAt<T, E2> {
+        match self {
+            OkAt(x, at) => OkAt(x, at),
+            ErrAt(e, at) => ErrAt(e.into(), at),
+            NoneAt(at) => ErrAt(e, at),
+        }
+    }
+
+    /// Runs the given function on `OkAt`, defaulting to the given value otherwise.
+    pub fn map_or<O>(self, default: O, op: impl FnOnce(T) -> O) -> O {
+        match self {
+            OkAt(x, _) => op(x),
+            ErrAt(_, _) => default,
+            NoneAt(_) => default,
+        }
+    }
 }
 
 impl<T, E: From<E2>, E2> std::ops::FromResidual<ResultAt<std::convert::Infallible, E2>>

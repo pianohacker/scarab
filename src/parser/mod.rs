@@ -12,12 +12,12 @@ use thiserror::Error;
 
 use self::tokenizer::{tokenize, Token, Tokenizer};
 use crate::value::Value;
-use result_at::{Reader, ResultAt};
+use result_at::{Reader, ResultAt, ResultAt::*};
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum ErrorInternal {
     #[error("unexpected end of input")]
-    EOF,
+    Eof,
     #[error("mismatched operator list; operator {1} does not match initial operator {0}")]
     MismatchedOperatorList(String, String),
     #[error("{source}")]
@@ -75,8 +75,9 @@ type IResultAt<T> = ResultAt<T, ErrorInternal>;
 
 fn result_from_result_at<T>(result_at: IResultAt<T>) -> Result<T> {
     match result_at {
-        ResultAt(Ok(x), _) => Ok(x),
-        ResultAt(Err(e), at) => Err(Error::from_internal_at(e, at)),
+        OkAt(x, _) => Ok(x),
+        ErrAt(e, at) => Err(Error::from_internal_at(e, at)),
+        NoneAt(at) => Err(Error::from_internal_at(ErrorInternal::Eof, at)),
     }
 }
 
@@ -90,10 +91,8 @@ macro_rules! expect_match {
             let (token, at) = $token_at;
             match token {
                 $($pat => $body,)+
-                _ => return ResultAt(
-                    Err(
-                        ErrorInternal::UnexpectedToken(token),
-                    ),
+                _ => return ErrAt(
+                    ErrorInternal::UnexpectedToken(token),
                     at,
                 ),
             }
@@ -109,42 +108,53 @@ impl<I: Iterator<Item = char>> Parser<I> {
     }
 
     fn next(&mut self) -> IResultAt<Token> {
+        self.input
+            .items_while_successful_if(|t| *t == Token::Newline)
+            .for_each(drop);
+
         self.input.next().map_err(|e| e.into())
     }
 
     fn peek(&mut self) -> ResultAt<&Token, ErrorInternal> {
+        self.input
+            .items_while_successful_if(|t| *t == Token::Newline)
+            .for_each(drop);
+
+        self.input.peek().as_ref().map_err(|e| e.clone().into())
+    }
+
+    fn peek_with_newlines(&mut self) -> ResultAt<&Token, ErrorInternal> {
         self.input.peek().as_ref().map_err(|e| e.clone().into())
     }
 
     fn peek_or(&mut self, error: ErrorInternal) -> ResultAt<&Token, ErrorInternal> {
-        self.input.peek().as_ref().map_err(|e| match e {
-            tokenizer::Error::Eof { .. } => error,
-            _ => e.clone().into(),
-        })
+        self.input
+            .items_while_successful_if(|t| *t == Token::Newline)
+            .for_each(drop);
+
+        self.peek().none_as_err(error)
     }
 
     fn parse_list(
         &mut self,
-        terminator_predicate: impl Fn(IResult<&Token>) -> IResult<bool>,
+        terminator_predicate: impl Fn(IResultAt<&Token>) -> IResultAt<bool>,
         at: (usize, usize),
     ) -> IResultAt<Value> {
         let mut elements = vec![];
 
         loop {
-            let ResultAt(result, at) = self.peek();
+            let result = self.peek_with_newlines();
 
-            if ResultAt(
-                terminator_predicate(result).map_err(|_| ErrorInternal::UnterminatedList),
-                at,
-            )?
-            .0
+            if terminator_predicate(result)
+                .none_as_err(ErrorInternal::UnterminatedList)?
+                .0
             {
                 break;
             }
             elements.push(self.parse_value()?.0);
         }
 
-        ResultAt(Ok(Self::elements_to_list(elements)), at)
+        OkAt(Self::elements_to_list(elements), at)
     }
 
     fn parse_operator_list(&mut self, at: (usize, usize)) -> IResultAt<Value> {
@@ -165,11 +175,8 @@ impl<I: Iterator<Item = char>> Parser<I> {
             });
 
             if next_operator != operator {
-                return ResultAt(
-                    Err(ErrorInternal::MismatchedOperatorList(
-                        operator,
-                        next_operator,
-                    )),
+                return ErrAt(
+                    ErrorInternal::MismatchedOperatorList(operator, next_operator),
                     at,
                 );
             }
@@ -181,12 +188,12 @@ impl<I: Iterator<Item = char>> Parser<I> {
             Token::RBracket => (),
         });
 
-        ResultAt(Ok(Self::elements_to_list(elements)), at)
+        OkAt(Self::elements_to_list(elements), at)
     }
 
     fn parse_form_list_item(
         &mut self,
-        terminator_predicate: impl Fn(IResult<&Token>) -> IResult<bool>,
+        terminator_predicate: impl Fn(IResultAt<&Token>) -> IResultAt<bool>,
         at: (usize, usize),
     ) -> IResultAt<Value> {
         let (list, _) = self.parse_list(terminator_predicate, at)?;
@@ -195,7 +202,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
             .items_while_successful_if(|t| *t == Token::Comma || *t == Token::Newline)
             .for_each(drop);
 
-        ResultAt(Ok(list), at)
+        OkAt(list, at)
     }
 
     fn parse_form_list(&mut self, mut at: (usize, usize)) -> IResultAt<Value> {
@@ -222,7 +229,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
             Token::RBrace => (),
         });
 
-        ResultAt(Ok(Self::elements_to_list(lists)), at)
+        OkAt(Self::elements_to_list(lists), at)
     }
 
     pub fn parse_implicit_form_list(&mut self) -> IResultAt<Value> {
@@ -231,19 +238,16 @@ impl<I: Iterator<Item = char>> Parser<I> {
 
         loop {
             let next_at = match self.input.peek() {
-                ResultAt(Ok(_), at) => at,
-                ResultAt(Err(tokenizer::Error::Eof { .. }), _) => break,
-                ResultAt(Err(e), at) => return ResultAt(Err(e.clone().into()), *at),
+                OkAt(_, at) => at,
+                ErrAt(e, at) => return ErrAt(e.clone().into(), *at),
+                NoneAt(_) => break,
             };
             at = *next_at;
 
             let (list, _) = self.parse_form_list_item(
-                |t| match t {
-                    Ok(t) => Ok(*t == Token::Comma || *t == Token::Newline || *t == Token::RBrace),
-                    Err(ErrorInternal::Tokenize {
-                        source: tokenizer::Error::Eof { .. },
-                    }) => Ok(true),
-                    Err(e) => Err(e),
+                |t| {
+                    t.map(|t| *t == Token::Comma || *t == Token::Newline)
+                        .none_as_value(true)
                 },
                 at,
             )?;
@@ -252,19 +256,19 @@ impl<I: Iterator<Item = char>> Parser<I> {
             }
         }
 
-        ResultAt(Ok(Self::elements_to_list(lists)), at)
+        OkAt(Self::elements_to_list(lists), at)
     }
 
     pub fn parse_value(&mut self) -> IResultAt<Value> {
         self.next().and_then_at(|t, at| {
             expect_match!( (t, at), {
-                Token::Integer(i) => ResultAt(Ok(Value::Integer(i)), at),
-                Token::String(s) => ResultAt(Ok(Value::String(s)), at),
-                Token::Identifier(i) => ResultAt(Ok(Value::Identifier(i)), at),
+                Token::Integer(i) => OkAt(Value::Integer(i), at),
+                Token::String(s) => OkAt(Value::String(s), at),
+                Token::Identifier(i) => OkAt(Value::Identifier(i), at),
                 Token::LParen => {
                     let (result, _) = self.parse_list(|t| t.map(|t| *t == Token::RParen), at)?;
                     self.next()?;
-                    ResultAt(Ok(result), at)
+                    OkAt(result, at)
                 },
                 Token::LBracket => self.parse_operator_list(at),
                 Token::LBrace => self.parse_form_list(at),
@@ -303,271 +307,82 @@ mod tests {
     use super::*;
     use k9::{assert_err_matches_regex, snapshot};
 
-    fn try_parse(input: &str) -> Result<Value> {
-        parse_value(input.chars())
+    fn try_parse_display(input: &str) -> Result<String> {
+        parse_value(input.chars()).map(|v| format!("{}", v))
     }
 
     #[test]
     fn empty_parse_fails() -> Result<()> {
-        assert_err_matches_regex!(try_parse(""), "Eof");
+        assert_err_matches_regex!(try_parse_display(""), "Eof");
 
         Ok(())
     }
 
     #[test]
     fn unexpected_tokens_fail() -> Result<()> {
-        assert_err_matches_regex!(try_parse(")"), "Unexpected.*RParen");
+        assert_err_matches_regex!(try_parse_display(")"), "Unexpected.*RParen");
 
         Ok(())
     }
 
     #[test]
     fn single_values() -> Result<()> {
-        snapshot!(
-            try_parse("123"),
-            "
-Ok(
-    Integer(
-        123,
-    ),
-)
-"
-        );
-        snapshot!(
-            try_parse("\"abc\""),
-            r#"
-Ok(
-    String(
-        "abc",
-    ),
-)
-"#
-        );
-        snapshot!(
-            try_parse("blah"),
-            r#"
-Ok(
-    Identifier(
-        "blah",
-    ),
-)
-"#
-        );
+        snapshot!(try_parse_display("123")?, "123");
+        snapshot!(try_parse_display("\"abc\"")?, r#""abc""#);
+        snapshot!(try_parse_display("blah")?, "blah");
 
         Ok(())
     }
 
     #[test]
     fn quoted_values() -> Result<()> {
-        snapshot!(
-            try_parse("'abc"),
-            r#"
-Ok(
-    Quoted(
-        Identifier(
-            "abc",
-        ),
-    ),
-)
-"#
-        );
+        snapshot!(try_parse_display("'abc")?, r"'abc");
 
-        snapshot!(
-            try_parse("''123"),
-            "
-Ok(
-    Quoted(
-        Quoted(
-            Integer(
-                123,
-            ),
-        ),
-    ),
-)
-"
-        );
+        snapshot!(try_parse_display("''123")?, r"''123");
 
-        snapshot!(
-            try_parse("'(1 2 3)"),
-            "
-Ok(
-    Quoted(
-        Cell(
-            Integer(
-                1,
-            ),
-            Cell(
-                Integer(
-                    2,
-                ),
-                Cell(
-                    Integer(
-                        3,
-                    ),
-                    Nil,
-                ),
-            ),
-        ),
-    ),
-)
-"
-        );
+        snapshot!(try_parse_display("'(1 2 3))")?, r"'(1 2 3)");
 
         Ok(())
     }
 
     #[test]
     fn simple_list() -> Result<()> {
-        snapshot!(
-            try_parse("(+ 123 456)"),
-            r#"
-Ok(
-    Cell(
-        Identifier(
-            "+",
-        ),
-        Cell(
-            Integer(
-                123,
-            ),
-            Cell(
-                Integer(
-                    456,
-                ),
-                Nil,
-            ),
-        ),
-    ),
-)
-"#
-        );
+        snapshot!(try_parse_display("(+ 123 456))")?, "(+ 123 456)");
+
+        Ok(())
+    }
+
+    #[test]
+    fn simple_list_containing_newline() -> Result<()> {
+        snapshot!(try_parse_display("(+ 123\n456))")?, "(+ 123 456)");
 
         Ok(())
     }
 
     #[test]
     fn nested_list() -> Result<()> {
-        snapshot!(
-            try_parse("(+ ((-) 123) 456)"),
-            r#"
-Ok(
-    Cell(
-        Identifier(
-            "+",
-        ),
-        Cell(
-            Cell(
-                Cell(
-                    Identifier(
-                        "-",
-                    ),
-                    Nil,
-                ),
-                Cell(
-                    Integer(
-                        123,
-                    ),
-                    Nil,
-                ),
-            ),
-            Cell(
-                Integer(
-                    456,
-                ),
-                Nil,
-            ),
-        ),
-    ),
-)
-"#
-        );
+        snapshot!(try_parse_display("(+ ((-)) 123) 456)")?, "(+ ((-)) 123)");
 
         Ok(())
     }
 
     #[test]
     fn simple_operator_list() -> Result<()> {
-        snapshot!(
-            try_parse("[1 + 2 + 'a]")?,
-            r#"
-Cell(
-    Identifier(
-        "+",
-    ),
-    Cell(
-        Integer(
-            1,
-        ),
-        Cell(
-            Integer(
-                2,
-            ),
-            Cell(
-                Quoted(
-                    Identifier(
-                        "a",
-                    ),
-                ),
-                Nil,
-            ),
-        ),
-    ),
-)
-"#
-        );
+        snapshot!(try_parse_display("[1 + 2 + 'a]")?, r"(+ 1 2 'a)");
 
         Ok(())
     }
 
     #[test]
     fn mismatched_operator_list() -> Result<()> {
-        assert_err_matches_regex!(try_parse("[1 + 2 * 3]"), "MismatchedOperatorList");
+        assert_err_matches_regex!(try_parse_display("[1 + 2 * 3]"), "MismatchedOperatorList");
 
         Ok(())
     }
 
     #[test]
     fn single_line_form_list() -> Result<()> {
-        snapshot!(
-            try_parse("{a b, c d, 1}")?,
-            r#"
-Cell(
-    Cell(
-        Identifier(
-            "a",
-        ),
-        Cell(
-            Identifier(
-                "b",
-            ),
-            Nil,
-        ),
-    ),
-    Cell(
-        Cell(
-            Identifier(
-                "c",
-            ),
-            Cell(
-                Identifier(
-                    "d",
-                ),
-                Nil,
-            ),
-        ),
-        Cell(
-            Cell(
-                Integer(
-                    1,
-                ),
-                Nil,
-            ),
-            Nil,
-        ),
-    ),
-)
-"#
-        );
+        snapshot!(try_parse_display("{a b, c d, 1}")?, "((a b) (c d) (1))");
 
         Ok(())
     }
@@ -575,51 +390,13 @@ Cell(
     #[test]
     fn multi_line_form_list() -> Result<()> {
         snapshot!(
-            try_parse(
+            try_parse_display(
                 "{
                     d c 1
                     e f \"yo\"
                 }"
             )?,
-            r#"
-Cell(
-    Cell(
-        Identifier(
-            "d",
-        ),
-        Cell(
-            Identifier(
-                "c",
-            ),
-            Cell(
-                Integer(
-                    1,
-                ),
-                Nil,
-            ),
-        ),
-    ),
-    Cell(
-        Cell(
-            Identifier(
-                "e",
-            ),
-            Cell(
-                Identifier(
-                    "f",
-                ),
-                Cell(
-                    String(
-                        "yo",
-                    ),
-                    Nil,
-                ),
-            ),
-        ),
-        Nil,
-    ),
-)
-"#
+            r#"((d c 1) (e f "yo"))"#
         );
 
         Ok(())
@@ -627,30 +404,47 @@ Cell(
 
     #[test]
     fn unterminated_lists() -> Result<()> {
-        assert_err_matches_regex!(try_parse("(1 2"), "UnterminatedList");
-        assert_err_matches_regex!(try_parse("[1 + 2"), "UnterminatedList");
-        assert_err_matches_regex!(try_parse("{a c, d"), "UnterminatedList");
+        assert_err_matches_regex!(try_parse_display("(1 2"), "UnterminatedList");
+        assert_err_matches_regex!(try_parse_display("[1 + 2"), "UnterminatedList");
+        assert_err_matches_regex!(try_parse_display("{a c, d"), "UnterminatedList");
 
         Ok(())
     }
 
     #[test]
     fn tokenize_errors_passed_through() -> Result<()> {
-        assert_err_matches_regex!(try_parse("\"abc"), "Tokenize.*String");
-        assert_err_matches_regex!(try_parse("(\"abc"), "Tokenize.*String");
+        assert_err_matches_regex!(try_parse_display("\"abc"), "Tokenize.*String");
+        assert_err_matches_regex!(try_parse_display("(\"abc"), "Tokenize.*String");
 
         Ok(())
     }
 
     #[test]
     fn multi_line_implicit_form_list() -> Result<()> {
-        snapshot!(parse_implicit_form_list(
-            "
-                d c 1
-                e f \"yo\"
-            "
-            .chars()
-        )?);
+        snapshot!(
+            format!(
+                "{}",
+                parse_implicit_form_list(
+                    "
+                        d c 1
+
+                        e f \"yo\"
+                    "
+                    .chars()
+                )?
+            ),
+            r#"((d c 1) (e f "yo"))"#
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn multi_line_implicit_form_list_cannot_end_with_brace() -> Result<()> {
+        assert_err_matches_regex!(
+            parse_implicit_form_list("d c 1}".chars()),
+            "UnexpectedToken.*Brace"
+        );
 
         Ok(())
     }
