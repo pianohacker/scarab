@@ -46,7 +46,7 @@ pub enum Token {
     RBrace,
     Quote,
     Newline,
-    Comma,
+    Semicolon,
     Integer(isize),
     String(String),
     Identifier(String),
@@ -54,7 +54,7 @@ pub enum Token {
 
 fn char_is_token_end(c: char) -> bool {
     match c {
-        '(' | ')' | '[' | ']' | '{' | '}' | '\'' | '"' | '\n' | ',' => true,
+        '(' | ')' | '[' | ']' | '{' | '}' | '\'' | '"' | '\n' | ';' => true,
         _ if c.is_ascii_whitespace() => true,
         _ => false,
     }
@@ -160,7 +160,7 @@ where
                 '}' => OkAt(RBrace, at),
                 '\'' => OkAt(Quote, at),
                 '\n' => OkAt(Newline, at),
-                ',' => OkAt(Comma, at),
+                ';' => OkAt(Semicolon, at),
                 '"' => self.tokenize_string(at),
                 _ if c.is_ascii_digit() => self.tokenize_integer(c, at),
                 '-' if self.input.peek().map_or(false, |c2| c2.is_ascii_digit()) => {
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn single_character_tokens() -> Result<()> {
         snapshot!(
-            try_tokenize("()[]{}',")?,
+            try_tokenize("()[]{}';")?,
             "
 [
     LParen,
@@ -226,7 +226,7 @@ mod tests {
     LBrace,
     RBrace,
     Quote,
-    Comma,
+    Semicolon,
 ]
 "
         );

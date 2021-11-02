@@ -199,7 +199,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
         let (list, _) = self.parse_list(terminator_predicate, at)?;
 
         self.input
-            .items_while_successful_if(|t| *t == Token::Comma || *t == Token::Newline)
+            .items_while_successful_if(|t| *t == Token::Semicolon || *t == Token::Newline)
             .for_each(drop);
 
         OkAt(list, at)
@@ -215,7 +215,9 @@ impl<I: Iterator<Item = char>> Parser<I> {
             }
 
             let (list, _) = self.parse_form_list_item(
-                |t| t.map(|t| *t == Token::Comma || *t == Token::Newline || *t == Token::RBrace),
+                |t| {
+                    t.map(|t| *t == Token::Semicolon || *t == Token::Newline || *t == Token::RBrace)
+                },
                 at,
             )?;
             if list != Value::Nil {
@@ -246,7 +248,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
 
             let (list, _) = self.parse_form_list_item(
                 |t| {
-                    t.map(|t| *t == Token::Comma || *t == Token::Newline)
+                    t.map(|t| *t == Token::Semicolon || *t == Token::Newline)
                         .none_as_value(true)
                 },
                 at,
@@ -382,7 +384,7 @@ mod tests {
 
     #[test]
     fn single_line_form_list() -> Result<()> {
-        snapshot!(try_parse_display("{a b, c d, 1}")?, "((a b) (c d) (1))");
+        snapshot!(try_parse_display("{a b; c d; 1}")?, "((a b) (c d) (1))");
 
         Ok(())
     }
