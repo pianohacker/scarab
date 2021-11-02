@@ -6,10 +6,47 @@
 
 use std::rc::Rc;
 
+use thiserror::Error;
+
 pub type Identifier = String;
 
 pub fn identifier(i: impl Into<String>) -> Identifier {
     i.into()
+}
+
+#[derive(Error, Debug, Eq, PartialEq)]
+pub enum Error {
+    #[error("expected {0}, got {1}")]
+    ExpectedType(Type, Type),
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Type {
+    Nil,
+    Integer,
+    String,
+    Identifier,
+    Cell,
+    Quoted,
+}
+
+impl std::fmt::Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Type::Nil => "nil",
+                Type::Integer => "integer",
+                Type::String => "string",
+                Type::Identifier => "identifier",
+                Type::Cell => "cell",
+                Type::Quoted => "quoted",
+            }
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,18 +74,37 @@ impl Value {
         }
     }
 
-    pub fn unwrap_cell(self) -> (Rc<Value>, Rc<Value>) {
+    pub fn try_into_identifier(self) -> Result<Identifier> {
         match self {
-            Value::Cell(l, r) => (l, r),
-            _ => panic!("tried to unwrap {:?} as cell", self),
+            Value::Identifier(i) => Ok(i),
+            _ => Err(Error::ExpectedType(Type::Identifier, self.type_())),
         }
     }
 
-    pub fn unwrap_cell_ref(&self) -> (&Rc<Value>, &Rc<Value>) {
+    pub fn try_into_cell(self) -> Result<(Rc<Value>, Rc<Value>)> {
         match self {
-            Value::Cell(l, r) => (l, r),
-            _ => panic!("tried to unwrap {:?} as cell", self),
+            Value::Cell(l, r) => Ok((l, r)),
+            _ => Err(Error::ExpectedType(Type::Cell, self.type_())),
         }
+    }
+
+    pub fn into_iter_list(self) -> impl Iterator<Item = Result<Self>> {
+        let mut current = Some(self);
+
+        std::iter::from_fn(move || match current.take() {
+            None => None,
+            Some(Value::Nil) => None,
+            Some(val) => match val.try_into_cell() {
+                Ok((l, r)) => {
+                    current = Some(Rc::try_unwrap(r).unwrap());
+                    Some(Ok(Rc::try_unwrap(l).unwrap()))
+                }
+                Err(e) => {
+                    current = None;
+                    Some(Err(e))
+                }
+            },
+        })
     }
 
     pub fn as_isize(&self) -> Option<isize> {
@@ -57,13 +113,24 @@ impl Value {
             _ => None,
         }
     }
+
+    pub fn type_(&self) -> Type {
+        match self {
+            Value::Nil => Type::Nil,
+            Value::Integer(_) => Type::Integer,
+            Value::String(_) => Type::String,
+            Value::Identifier(_) => Type::Identifier,
+            Value::Cell(_, _) => Type::Cell,
+            Value::Quoted(_) => Type::Quoted,
+        }
+    }
 }
 
 fn format_cell_contents<'a>(
     mut left: &'a Rc<Value>,
     mut right: &'a Rc<Value>,
     f: &mut std::fmt::Formatter<'_>,
-) -> Result<(), std::fmt::Error> {
+) -> std::fmt::Result {
     loop {
         match (&**left, &**right) {
             (lv, &Value::Nil) => break write!(f, "{}", lv),
@@ -78,7 +145,7 @@ fn format_cell_contents<'a>(
 }
 
 impl std::fmt::Display for Value {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Identifier(i) => write!(f, "{}", i),
             Value::Integer(i) => write!(f, "{}", i),
@@ -157,7 +224,7 @@ macro_rules! value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use k9::snapshot;
+    use k9::{assert_err_matches_regex, snapshot};
 
     #[test]
     fn string_display() {
@@ -319,5 +386,42 @@ mod tests {
             ))),
             value!(@(123 @(def @123) (@123 (@"def"))))
         );
+    }
+
+    #[test]
+    fn iter_list_gives_items_for_valid_list() -> Result<()> {
+        snapshot!(
+            format!(
+                "{}",
+                value!((1 "a" (2 3)))
+                    .into_iter_list()
+                    .map(|x| x.map(|x| format!("{}", x)))
+                    .collect::<Result<Vec<_>>>()?
+                    .join(", ")
+            ),
+            r#"1, "a", (2 3)"#
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn iter_list_fails_for_non_lists() {
+        assert_err_matches_regex!(
+            value!(1).into_iter_list().next().unwrap(),
+            "ExpectedType.*Integer"
+        );
+    }
+
+    #[test]
+    fn iter_list_fails_for_invalid_lists() {
+        let mut iter = Value::Cell(
+            Rc::new(Value::Integer(4)),
+            Rc::new(Value::String("a".to_string())),
+        )
+        .into_iter_list();
+
+        assert_eq!(iter.next(), Some(Ok(Value::Integer(4))));
+        assert_err_matches_regex!(iter.next().unwrap(), "ExpectedType.*String");
     }
 }

@@ -42,8 +42,8 @@ enum ErrorInternal {
     Placeholder,
 }
 
-type RegisterId = u8;
-type RegisterOffset = u8;
+pub type RegisterId = u8;
+pub type RegisterOffset = u8;
 type RegisterOffsetIntermediate = i16;
 
 #[derive(Debug)]
@@ -108,7 +108,7 @@ impl Registers {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Instruction {
+pub enum Instruction {
     // Allocate `count` more registers.
     AllocRegisters {
         count: usize,
