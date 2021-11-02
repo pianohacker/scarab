@@ -70,7 +70,6 @@ impl std::fmt::Display for Error {
 }
 
 type Result<T> = std::result::Result<T, Error>;
-type IResult<T> = std::result::Result<T, ErrorInternal>;
 type IResultAt<T> = ResultAt<T, ErrorInternal>;
 
 fn result_from_result_at<T>(result_at: IResultAt<T>) -> Result<T> {
