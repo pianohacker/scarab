@@ -5,7 +5,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 mod tokenizer;
-mod utils;
 
 use std::rc::Rc;
 use thiserror::Error;
