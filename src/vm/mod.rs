@@ -4,9 +4,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+pub mod code;
+
 use std::io;
 use thiserror::Error;
 
+use crate::builtins;
 use crate::value::{self, Value};
 
 type Pc = usize;
@@ -42,115 +45,27 @@ enum ErrorInternal {
     Placeholder,
 }
 
-pub type RegisterId = u8;
-pub type RegisterOffset = u8;
-type RegisterOffsetIntermediate = i16;
-
-#[derive(Debug)]
-struct Registers {
-    values: Vec<Value>,
-    offset_stack: Vec<usize>,
-    offset: usize,
+pub(crate) struct Vm<'a> {
+    instructions: Vec<code::Instruction>,
+    pub(crate) registers: code::Registers,
+    pub(crate) debug_output: &'a mut dyn io::Write,
 }
 
-impl std::ops::Index<RegisterId> for Registers {
-    type Output = Value;
-
-    fn index(&self, index: u8) -> &Value {
-        &self.values[self.offset + index as usize]
-    }
-}
-
-impl std::ops::IndexMut<RegisterId> for Registers {
-    fn index_mut(&mut self, index: u8) -> &mut Value {
-        &mut self.values[self.offset + index as usize]
-    }
-}
-
-impl Registers {
-    fn new() -> Self {
-        Self {
-            values: vec![],
-            offset_stack: vec![],
-            offset: 0,
-        }
-    }
-
-    fn allocate(&mut self, count: usize) {
-        self.values
-            .resize_with(self.values.len() + count, || Value::Nil);
-    }
-
-    fn deallocate(&mut self, count: usize) {
-        self.values
-            .resize_with(self.values.len() - count, || Value::Nil);
-    }
-
-    fn push_window(&mut self, size: RegisterOffset) {
-        self.offset_stack.push(self.offset);
-
-        self.offset = (self.values.len() as RegisterOffsetIntermediate
-            - size as RegisterOffsetIntermediate)
-            .max(0) as usize
-    }
-
-    fn pop_window(&mut self) {
-        self.offset = self.offset_stack.pop().unwrap_or(0);
-    }
-
-    fn iter(&self) -> std::slice::Iter<'_, Value> {
-        self.values[self.offset..].iter()
-    }
-
-    fn into_values(self) -> Vec<Value> {
-        self.values
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Instruction {
-    // Allocate `count` more registers.
-    AllocRegisters {
-        count: usize,
-    },
-    // Drop `count` registers.
-    DeallocRegisters {
-        count: usize,
-    },
-    // Load a register with the given value.
-    LoadImmediate {
-        dest: RegisterId,
-        value: Value,
-    },
-    // Call the given function, passing the last `num_args` registers as the registers visible to
-    // the function.
-    CallInternal {
-        ident: value::Identifier,
-        num_args: RegisterOffset,
-    },
-}
-
-struct Vm<O: io::Write> {
-    instructions: Vec<Instruction>,
-    registers: Registers,
-    debug_output: O,
-}
-
-impl<O: io::Write> Vm<O> {
-    fn new(debug_output: O) -> Self {
+impl<'a> Vm<'a> {
+    fn new(debug_output: &'a mut impl io::Write) -> Self {
         Self {
             instructions: vec![],
-            registers: Registers::new(),
+            registers: code::Registers::new(),
             debug_output,
         }
     }
 
-    fn load(&mut self, instructions: Vec<Instruction>) {
+    fn load(&mut self, instructions: Vec<code::Instruction>) {
         self.instructions = instructions;
     }
 
     fn run(&mut self) -> Result<()> {
-        use Instruction::*;
+        use code::Instruction::*;
 
         let mut pc = 0;
         while pc < self.instructions.len() {
@@ -161,10 +76,6 @@ impl<O: io::Write> Vm<O> {
             if let Err(e) = match instruction {
                 AllocRegisters { count } => {
                     self.registers.allocate(count);
-                    Ok(())
-                }
-                DeallocRegisters { count } => {
-                    self.registers.deallocate(count);
                     Ok(())
                 }
                 LoadImmediate { dest, value } => {
@@ -180,31 +91,20 @@ impl<O: io::Write> Vm<O> {
         Ok(())
     }
 
-    fn call_internal(&mut self, ident: value::Identifier, num_args: RegisterOffset) -> IResult<()> {
+    fn call_internal(
+        &mut self,
+        ident: value::Identifier,
+        num_args: code::RegisterOffset,
+    ) -> IResult<()> {
         self.registers.push_window(num_args);
 
-        match ident.as_str() {
-            "debug" => {
-                let output: Vec<_> = self.registers.iter().map(|v| format!("{}", v)).collect();
-                write!(self.debug_output, "{}\n", output.join(" ")).unwrap();
+        (builtins::get(&ident)
+            .ok_or(ErrorInternal::UnknownInternalFunction(ident.clone()))?
+            .run)(self);
 
-                return Ok(());
-            }
+        match ident.as_str() {
             _ => {}
         }
-
-        let result = match ident.as_str() {
-            "+" => self.registers.iter().map(|v| v.as_isize().unwrap()).sum(),
-            "-" => self
-                .registers
-                .iter()
-                .map(|v| v.as_isize().unwrap())
-                .reduce(|a, b| a - b)
-                .unwrap(),
-            _ => return Err(ErrorInternal::UnknownInternalFunction(ident)),
-        };
-
-        self.registers[0] = Value::Integer(result);
 
         self.registers.pop_window();
 
@@ -218,14 +118,13 @@ impl<O: io::Write> Vm<O> {
 
 #[cfg(test)]
 mod tests {
-    use super::Instruction as I;
+    use super::code::Instruction as I;
     use super::*;
     use crate::value;
 
     use k9::{assert_err_matches_regex, snapshot};
-    use std::rc::Rc;
 
-    fn run_into_registers(instructions: Vec<Instruction>) -> Result<Vec<Value>> {
+    fn run_into_registers(instructions: Vec<code::Instruction>) -> Result<Vec<Value>> {
         let mut debug_output = Vec::new();
         let registers = {
             let mut vm = Vm::new(&mut debug_output);
@@ -241,7 +140,7 @@ mod tests {
         Ok(registers)
     }
 
-    fn run_into_output(instructions: Vec<Instruction>) -> Result<String> {
+    fn run_into_output(instructions: Vec<code::Instruction>) -> Result<String> {
         let mut debug_output = Vec::new();
         {
             let mut vm = Vm::new(&mut debug_output);
@@ -306,7 +205,7 @@ mod tests {
                     ident: value::identifier("-"),
                     num_args: 2,
                 },
-                I::DeallocRegisters { count: 1 },
+                I::AllocRegisters { count: -1 },
                 I::CallInternal {
                     ident: value::identifier("+"),
                     num_args: 2,

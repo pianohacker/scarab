@@ -74,30 +74,30 @@ impl Value {
         }
     }
 
-    pub fn try_into_identifier(self) -> Result<Identifier> {
+    pub fn try_as_identifier(&self) -> Result<&Identifier> {
         match self {
             Value::Identifier(i) => Ok(i),
             _ => Err(Error::ExpectedType(Type::Identifier, self.type_())),
         }
     }
 
-    pub fn try_into_cell(self) -> Result<(Rc<Value>, Rc<Value>)> {
+    pub fn try_as_cell(&self) -> Result<(&Value, &Value)> {
         match self {
-            Value::Cell(l, r) => Ok((l, r)),
+            Value::Cell(ref l, ref r) => Ok((l, r)),
             _ => Err(Error::ExpectedType(Type::Cell, self.type_())),
         }
     }
 
-    pub fn into_iter_list(self) -> impl Iterator<Item = Result<Self>> {
+    pub fn iter_list(&self) -> impl Iterator<Item = Result<&Self>> {
         let mut current = Some(self);
 
         std::iter::from_fn(move || match current.take() {
             None => None,
             Some(Value::Nil) => None,
-            Some(val) => match val.try_into_cell() {
+            Some(val) => match val.try_as_cell() {
                 Ok((l, r)) => {
-                    current = Some(Rc::try_unwrap(r).unwrap());
-                    Some(Ok(Rc::try_unwrap(l).unwrap()))
+                    current = Some(r);
+                    Some(Ok(l))
                 }
                 Err(e) => {
                     current = None;
@@ -394,7 +394,7 @@ mod tests {
             format!(
                 "{}",
                 value!((1 "a" (2 3)))
-                    .into_iter_list()
+                    .iter_list()
                     .map(|x| x.map(|x| format!("{}", x)))
                     .collect::<Result<Vec<_>>>()?
                     .join(", ")
@@ -408,20 +408,20 @@ mod tests {
     #[test]
     fn iter_list_fails_for_non_lists() {
         assert_err_matches_regex!(
-            value!(1).into_iter_list().next().unwrap(),
+            value!(1).iter_list().next().unwrap(),
             "ExpectedType.*Integer"
         );
     }
 
     #[test]
     fn iter_list_fails_for_invalid_lists() {
-        let mut iter = Value::Cell(
+        let list = Value::Cell(
             Rc::new(Value::Integer(4)),
             Rc::new(Value::String("a".to_string())),
-        )
-        .into_iter_list();
+        );
+        let mut iter = list.iter_list();
 
-        assert_eq!(iter.next(), Some(Ok(Value::Integer(4))));
+        assert_eq!(iter.next(), Some(Ok(&Value::Integer(4))));
         assert_err_matches_regex!(iter.next().unwrap(), "ExpectedType.*String");
     }
 }

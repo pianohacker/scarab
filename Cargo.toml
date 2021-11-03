@@ -5,6 +5,7 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1.0.41"
+phf = { version = "0.10.0", features = ["macros"] }
 result-at = { path = "./result-at" }
 thiserror = "1.0.25"
 
