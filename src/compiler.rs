@@ -116,14 +116,14 @@ impl CompilerVisitor {
         use code::Instruction::*;
 
         let fn_name = l.try_as_identifier()?;
-        let builtin = builtins::get(fn_name).ok_or(Error::Placeholder)?;
+        builtins::get(fn_name).ok_or(Error::Placeholder)?;
 
         let args: Vec<_> = r.iter_list().collect::<value::Result<Vec<_>>>()?;
         let num_args = args.len() as code::RegisterOffset;
 
         let allocation = self.alloc_registers(num_args);
 
-        for (i, arg) in args.into_iter().enumerate() {
+        for arg in args.into_iter() {
             self.visit_expr(arg)?;
         }
 
