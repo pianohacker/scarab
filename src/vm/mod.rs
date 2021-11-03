@@ -45,14 +45,14 @@ enum ErrorInternal {
     Placeholder,
 }
 
-pub(crate) struct Vm<'a> {
+pub struct Vm<'a> {
     instructions: Vec<code::Instruction>,
     pub(crate) registers: code::Registers,
     pub(crate) debug_output: &'a mut dyn io::Write,
 }
 
 impl<'a> Vm<'a> {
-    fn new(debug_output: &'a mut impl io::Write) -> Self {
+    pub fn new(debug_output: &'a mut impl io::Write) -> Self {
         Self {
             instructions: vec![],
             registers: code::Registers::new(),
@@ -60,11 +60,11 @@ impl<'a> Vm<'a> {
         }
     }
 
-    fn load(&mut self, instructions: Vec<code::Instruction>) {
+    pub fn load(&mut self, instructions: Vec<code::Instruction>) {
         self.instructions = instructions;
     }
 
-    fn run(&mut self) -> Result<()> {
+    pub fn run(&mut self) -> Result<()> {
         use code::Instruction::*;
 
         let mut pc = 0;
@@ -101,10 +101,6 @@ impl<'a> Vm<'a> {
         (builtins::get(&ident)
             .ok_or(ErrorInternal::UnknownInternalFunction(ident.clone()))?
             .run)(self);
-
-        match ident.as_str() {
-            _ => {}
-        }
 
         self.registers.pop_window();
 

@@ -4,6 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::collections::HashSet;
+use std::ops::Range;
 use thiserror::Error;
 
 use crate::builtins;
@@ -24,34 +26,90 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
+struct RegisterAllocator {
+    next_register: code::RegisterId,
+    allocations: HashSet<RegisterAllocation>,
+}
+
+type RegisterAllocation = Range<code::RegisterId>;
+
+impl RegisterAllocator {
+    fn new() -> Self {
+        Self {
+            next_register: 0,
+            allocations: HashSet::new(),
+        }
+    }
+
+    fn highest_allocation_end(&self) -> code::RegisterId {
+        self.allocations.iter().map(|r| r.end).max().unwrap_or(0)
+    }
+
+    fn alloc_delta(&self, prev_max: code::RegisterId) -> code::RegisterOffset {
+        self.highest_allocation_end() as code::RegisterOffset - prev_max as code::RegisterOffset
+    }
+
+    fn alloc_registers(
+        &mut self,
+        count: code::RegisterOffset,
+    ) -> (code::RegisterOffset, RegisterAllocation) {
+        let allocation = self.next_register
+            ..((self.next_register as code::RegisterOffset + count) as code::RegisterId);
+
+        let prev_max = self.highest_allocation_end();
+        self.allocations.insert(allocation.clone());
+
+        (self.alloc_delta(prev_max), allocation)
+    }
+
+    fn use_register(&mut self) -> code::RegisterId {
+        let register_id = self.next_register;
+        self.next_register += 1;
+        assert!(register_id < self.highest_allocation_end());
+
+        register_id
+    }
+
+    fn drop_allocation(&mut self, allocation: RegisterAllocation) -> code::RegisterOffset {
+        let prev_max = self.highest_allocation_end();
+        self.allocations.remove(&allocation);
+
+        self.next_register = self.next_register.min(self.highest_allocation_end());
+
+        self.alloc_delta(prev_max)
+    }
+}
+
 struct CompilerVisitor {
     output: Vec<Instruction>,
-    next_register: code::RegisterId,
-    num_allocated: code::RegisterOffset,
+    allocator: RegisterAllocator,
 }
 
 impl CompilerVisitor {
     fn new() -> Self {
         Self {
             output: Vec::new(),
-            next_register: 0,
-            num_allocated: 0,
+            allocator: RegisterAllocator::new(),
         }
     }
 
-    fn register(&mut self) -> code::RegisterId {
-        let register_id = self.next_register;
-        self.next_register += 1;
-
-        register_id
+    fn push_alloc_registers(&mut self, diff: code::RegisterOffset) {
+        if diff != 0 {
+            self.output
+                .push(code::Instruction::AllocRegisters { count: diff });
+        }
     }
 
-    fn push_dealloc_registers(&mut self, count: code::RegisterOffset) {
-        self.next_register =
-            ((self.next_register as code::RegisterOffset) - count) as code::RegisterId;
+    fn alloc_registers(&mut self, count: code::RegisterOffset) -> RegisterAllocation {
+        let (diff, allocation) = self.allocator.alloc_registers(count);
+        self.push_alloc_registers(diff);
 
-        self.output
-            .push(code::Instruction::AllocRegisters { count: -count });
+        allocation
+    }
+
+    fn drop_allocation(&mut self, allocation: RegisterAllocation) {
+        let diff = self.allocator.drop_allocation(allocation);
+        self.push_alloc_registers(diff);
     }
 
     fn visit_call(&mut self, l: &Value, r: &Value) -> Result<()> {
@@ -63,9 +121,7 @@ impl CompilerVisitor {
         let args: Vec<_> = r.iter_list().collect::<value::Result<Vec<_>>>()?;
         let num_args = args.len() as code::RegisterOffset;
 
-        self.output.push(AllocRegisters {
-            count: num_args as code::RegisterOffset,
-        });
+        let allocation = self.alloc_registers(num_args);
 
         for (i, arg) in args.into_iter().enumerate() {
             self.visit_expr(arg)?;
@@ -76,7 +132,7 @@ impl CompilerVisitor {
             num_args,
         });
 
-        // self.push_dealloc_registers(num_args - builtin.num_outputs);
+        self.drop_allocation(allocation);
 
         Ok(())
     }
@@ -86,7 +142,7 @@ impl CompilerVisitor {
 
         match expr {
             Value::Integer(_) => {
-                let dest = self.register();
+                let dest = self.allocator.use_register();
 
                 self.output.push(LoadImmediate {
                     dest,
@@ -149,6 +205,9 @@ mod tests {
         ident: "+",
         num_args: 3,
     },
+    AllocRegisters {
+        count: -3,
+    },
 ]
 "#
         );
@@ -172,7 +231,7 @@ mod tests {
         ),
     },
     AllocRegisters {
-        count: 2,
+        count: 1,
     },
     LoadImmediate {
         dest: 1,
@@ -190,9 +249,15 @@ mod tests {
         ident: "+",
         num_args: 2,
     },
+    AllocRegisters {
+        count: -1,
+    },
     CallInternal {
         ident: "+",
         num_args: 2,
+    },
+    AllocRegisters {
+        count: -2,
     },
 ]
 "#
@@ -215,9 +280,6 @@ mod tests {
         value: Integer(
             1,
         ),
-    },
-    AllocRegisters {
-        count: 2,
     },
     LoadImmediate {
         dest: 1,
@@ -254,9 +316,15 @@ mod tests {
         ident: "+",
         num_args: 2,
     },
+    AllocRegisters {
+        count: -2,
+    },
     CallInternal {
         ident: "+",
         num_args: 3,
+    },
+    AllocRegisters {
+        count: -3,
     },
 ]
 "#

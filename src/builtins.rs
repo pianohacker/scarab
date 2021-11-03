@@ -42,5 +42,5 @@ static BUILTINS: phf::Map<&'static str, Builtin> = phf_map! {
 };
 
 pub(crate) fn get(name: &Identifier) -> Option<&'static Builtin> {
-    BUILTINS.get(&name)
+    BUILTINS.get(name)
 }
