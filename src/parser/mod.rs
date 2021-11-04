@@ -264,7 +264,14 @@ impl<I: Iterator<Item = char>> Parser<I> {
             expect_match!( (t, at), {
                 Token::Integer(i) => OkAt(Value::Integer(i), at),
                 Token::String(s) => OkAt(Value::String(s), at),
-                Token::Identifier(i) => OkAt(Value::Identifier(i), at),
+                Token::Identifier(i) => {
+                    OkAt(match i.as_str() {
+                        "nil" => Value::Nil,
+                        "true" => Value::Boolean(true),
+                        "false" => Value::Boolean(false),
+                        _ => Value::Identifier(i),
+                    }, at)
+                },
                 Token::LParen => {
                     let (result, _) = self.parse_list(|t| t.map(|t| *t == Token::RParen), at)?;
                     self.next()?;
@@ -330,6 +337,23 @@ mod tests {
         snapshot!(try_parse_display("123")?, "123");
         snapshot!(try_parse_display("\"abc\"")?, r#""abc""#);
         snapshot!(try_parse_display("blah")?, "blah");
+        snapshot!(parse_value("nil".chars())?, "Nil");
+        snapshot!(
+            parse_value("true".chars())?,
+            "
+Boolean(
+    true,
+)
+"
+        );
+        snapshot!(
+            parse_value("false".chars())?,
+            "
+Boolean(
+    false,
+)
+"
+        );
 
         Ok(())
     }

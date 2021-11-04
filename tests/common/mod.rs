@@ -14,5 +14,5 @@ pub fn exec(code: &str) -> String {
         vm.run().expect("running program failed");
     }
 
-    String::from_utf8(debug_output).unwrap()
+    String::from_utf8(debug_output).unwrap().trim().to_string()
 }

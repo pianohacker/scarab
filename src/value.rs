@@ -25,6 +25,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Type {
     Nil,
+    Boolean,
     Integer,
     String,
     Identifier,
@@ -39,6 +40,7 @@ impl std::fmt::Display for Type {
             "{}",
             match self {
                 Type::Nil => "nil",
+                Type::Boolean => "boolean",
                 Type::Integer => "integer",
                 Type::String => "string",
                 Type::Identifier => "identifier",
@@ -52,6 +54,7 @@ impl std::fmt::Display for Type {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
     Nil,
+    Boolean(bool),
     Integer(isize),
     String(String),
     Identifier(Identifier),
@@ -117,6 +120,7 @@ impl Value {
     pub fn type_(&self) -> Type {
         match self {
             Value::Nil => Type::Nil,
+            Value::Boolean(_) => Type::Boolean,
             Value::Integer(_) => Type::Integer,
             Value::String(_) => Type::String,
             Value::Identifier(_) => Type::Identifier,
@@ -147,6 +151,8 @@ fn format_cell_contents<'a>(
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Value::Nil => write!(f, "nil"),
+            Value::Boolean(b) => write!(f, "{}", b),
             Value::Identifier(i) => write!(f, "{}", i),
             Value::Integer(i) => write!(f, "{}", i),
             Value::String(s) => write!(f, "{:?}", s),
@@ -156,8 +162,13 @@ impl std::fmt::Display for Value {
                 write!(f, ")")
             }
             Value::Quoted(v) => write!(f, "'{}", v),
-            _ => todo!("{:?}", self),
         }
+    }
+}
+
+impl std::convert::From<bool> for Value {
+    fn from(b: bool) -> Self {
+        Value::Boolean(b)
     }
 }
 
@@ -168,8 +179,8 @@ impl std::convert::From<&str> for Value {
 }
 
 impl std::convert::From<isize> for Value {
-    fn from(s: isize) -> Self {
-        Value::Integer(s.into())
+    fn from(i: isize) -> Self {
+        Value::Integer(i.into())
     }
 }
 
@@ -208,6 +219,18 @@ macro_rules! value {
         $crate::value::Value::Quoted(std::rc::Rc::new(value!($quoted)))
     };
 
+    (nil) => {
+        Value::Nil
+    };
+
+    (false) => {
+        Value::from(false)
+    };
+
+    (true) => {
+        Value::from(true)
+    };
+
     ($ident:ident) => {
         $crate::value::Value::Identifier($crate::value::identifier(stringify!($ident)))
     };
@@ -225,6 +248,27 @@ macro_rules! value {
 mod tests {
     use super::*;
     use k9::{assert_err_matches_regex, snapshot};
+
+    #[test]
+    fn nil_display() {
+        snapshot!(format!("{}", Value::Nil), "nil");
+    }
+
+    #[test]
+    fn nil_macro() {
+        assert_eq!(Value::Nil, value!(nil));
+    }
+
+    #[test]
+    fn boolean_display() {
+        snapshot!(format!("{}", Value::Boolean(true)), "true");
+    }
+
+    #[test]
+    fn boolean_macro() {
+        assert_eq!(Value::Boolean(false), value!(false));
+        assert_eq!(Value::Boolean(true), value!(true));
+    }
 
     #[test]
     fn string_display() {
