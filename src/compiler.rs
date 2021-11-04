@@ -174,42 +174,27 @@ mod tests {
     use super::*;
     use k9::{assert_err_matches_regex, snapshot};
 
+    fn compile_display(program: Value) -> Result<String> {
+        Ok(compile(program)?
+            .into_iter()
+            .map(|i| format!("{}", i))
+            .collect::<Vec<_>>()
+            .join(";\n")
+            + ";")
+    }
+
     #[test]
     fn basic_add() -> Result<()> {
         snapshot!(
-            compile(value!(((+ 1 2 3))))?,
-            r#"
-[
-    AllocRegisters {
-        count: 3,
-    },
-    LoadImmediate {
-        dest: 0,
-        value: Integer(
-            1,
-        ),
-    },
-    LoadImmediate {
-        dest: 1,
-        value: Integer(
-            2,
-        ),
-    },
-    LoadImmediate {
-        dest: 2,
-        value: Integer(
-            3,
-        ),
-    },
-    CallInternal {
-        ident: "+",
-        num_args: 3,
-    },
-    AllocRegisters {
-        count: -3,
-    },
-]
-"#
+            compile_display(value!(((+ 1 2 3))))?,
+            "
+alloc 3;
+load 0 1;
+load 1 2;
+load 2 3;
+call + 3;
+alloc -3;
+"
         );
 
         Ok(())
@@ -218,49 +203,18 @@ mod tests {
     #[test]
     fn nested_add() -> Result<()> {
         snapshot!(
-            compile(value!(((+ 1 (+ 2 3)))))?,
-            r#"
-[
-    AllocRegisters {
-        count: 2,
-    },
-    LoadImmediate {
-        dest: 0,
-        value: Integer(
-            1,
-        ),
-    },
-    AllocRegisters {
-        count: 1,
-    },
-    LoadImmediate {
-        dest: 1,
-        value: Integer(
-            2,
-        ),
-    },
-    LoadImmediate {
-        dest: 2,
-        value: Integer(
-            3,
-        ),
-    },
-    CallInternal {
-        ident: "+",
-        num_args: 2,
-    },
-    AllocRegisters {
-        count: -1,
-    },
-    CallInternal {
-        ident: "+",
-        num_args: 2,
-    },
-    AllocRegisters {
-        count: -2,
-    },
-]
-"#
+            compile_display(value!(((+ 1 (+ 2 3)))))?,
+            "
+alloc 2;
+load 0 1;
+alloc 1;
+load 1 2;
+load 2 3;
+call + 2;
+alloc -1;
+call + 2;
+alloc -2;
+"
         );
 
         Ok(())
@@ -269,65 +223,21 @@ mod tests {
     #[test]
     fn double_nested_add() -> Result<()> {
         snapshot!(
-            compile(value!(((+ 1 (+ 2 3) (+ 4 5)))))?,
-            r#"
-[
-    AllocRegisters {
-        count: 3,
-    },
-    LoadImmediate {
-        dest: 0,
-        value: Integer(
-            1,
-        ),
-    },
-    LoadImmediate {
-        dest: 1,
-        value: Integer(
-            2,
-        ),
-    },
-    LoadImmediate {
-        dest: 2,
-        value: Integer(
-            3,
-        ),
-    },
-    CallInternal {
-        ident: "+",
-        num_args: 2,
-    },
-    AllocRegisters {
-        count: 2,
-    },
-    LoadImmediate {
-        dest: 3,
-        value: Integer(
-            4,
-        ),
-    },
-    LoadImmediate {
-        dest: 4,
-        value: Integer(
-            5,
-        ),
-    },
-    CallInternal {
-        ident: "+",
-        num_args: 2,
-    },
-    AllocRegisters {
-        count: -2,
-    },
-    CallInternal {
-        ident: "+",
-        num_args: 3,
-    },
-    AllocRegisters {
-        count: -3,
-    },
-]
-"#
+            compile_display(value!(((+ 1 (+ 2 3) (+ 4 5)))))?,
+            "
+alloc 3;
+load 0 1;
+load 1 2;
+load 2 3;
+call + 2;
+alloc 2;
+load 3 4;
+load 4 5;
+call + 2;
+alloc -2;
+call + 3;
+alloc -3;
+"
         );
 
         Ok(())

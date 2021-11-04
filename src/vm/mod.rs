@@ -116,7 +116,7 @@ impl<'a> Vm<'a> {
 mod tests {
     use super::code::Instruction as I;
     use super::*;
-    use crate::value;
+    use crate::{instructions, value};
 
     use k9::{assert_err_matches_regex, snapshot};
 
@@ -150,21 +150,12 @@ mod tests {
     #[test]
     fn basic_add() -> Result<()> {
         snapshot!(
-            run_into_registers(vec![
-                I::AllocRegisters { count: 2 },
-                I::LoadImmediate {
-                    dest: 0,
-                    value: value!(42)
-                },
-                I::LoadImmediate {
-                    dest: 1,
-                    value: value!(93)
-                },
-                I::CallInternal {
-                    ident: value::identifier("+"),
-                    num_args: 2,
-                },
-            ])?,
+            run_into_registers(instructions! {
+                alloc 2;
+                load 0 42;
+                load 1 93;
+                call + 2;
+            })?,
             "
 [
     Integer(
@@ -183,30 +174,15 @@ mod tests {
     #[test]
     fn subtract_and_add() -> Result<()> {
         snapshot!(
-            run_into_registers(vec![
-                I::AllocRegisters { count: 3 },
-                I::LoadImmediate {
-                    dest: 0,
-                    value: Value::Integer(22)
-                },
-                I::LoadImmediate {
-                    dest: 1,
-                    value: Value::Integer(100)
-                },
-                I::LoadImmediate {
-                    dest: 2,
-                    value: Value::Integer(89)
-                },
-                I::CallInternal {
-                    ident: value::identifier("-"),
-                    num_args: 2,
-                },
-                I::AllocRegisters { count: -1 },
-                I::CallInternal {
-                    ident: value::identifier("+"),
-                    num_args: 2,
-                },
-            ])?,
+            run_into_registers(instructions! {
+                alloc 3;
+                load 0 22;
+                load 1 100;
+                load 2 89;
+                call - 2;
+                alloc -1;
+                call + 2;
+            })?,
             "
 [
     Integer(
@@ -238,25 +214,13 @@ mod tests {
     #[test]
     fn debug() -> Result<()> {
         snapshot!(
-            run_into_output(vec![
-                I::AllocRegisters { count: 3 },
-                I::LoadImmediate {
-                    dest: 0,
-                    value: value!("blah"),
-                },
-                I::LoadImmediate {
-                    dest: 1,
-                    value: value!(100),
-                },
-                I::LoadImmediate {
-                    dest: 2,
-                    value: value!((abc)),
-                },
-                I::CallInternal {
-                    ident: value::identifier("debug"),
-                    num_args: 3,
-                },
-            ])?,
+            run_into_output(instructions! {
+                alloc 3;
+                load 0 "blah";
+                load 1 100;
+                load 2 (abc);
+                call debug 3;
+            })?,
             r#"
 "blah" 100 (abc)
 

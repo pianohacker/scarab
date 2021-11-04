@@ -83,3 +83,63 @@ pub enum Instruction {
         num_args: RegisterOffset,
     },
 }
+
+impl std::fmt::Display for Instruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Instruction::*;
+
+        match self {
+            AllocRegisters { count } => write!(f, "alloc {}", count),
+            LoadImmediate { dest, value } => write!(f, "load {} {}", dest, value),
+            CallInternal { ident, num_args } => write!(f, "call {} {}", ident, num_args),
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! instructions {
+    ( @inner ($($accum:tt)*) alloc $count:expr; $($rest:tt)* ) => {
+        instructions!(
+            @inner
+            (
+                $($accum)*
+                $crate::vm::code::Instruction::AllocRegisters {
+                    count: $count,
+                },
+            )
+            $($rest)*
+        )
+    };
+    ( @inner ($($accum:tt)*) load $dest:tt $value:tt; $($rest:tt)* ) => {
+        instructions!(
+            @inner
+            (
+                $($accum)*
+                $crate::vm::code::Instruction::LoadImmediate {
+                    dest: $dest,
+                    value: $crate::value!($value),
+                },
+            )
+            $($rest)*
+        )
+    };
+    ( @inner ($($accum:tt)*) call $ident:tt $num_args:expr; $($rest:tt)* ) => {
+        instructions!(
+            @inner
+            (
+                $($accum)*
+                $crate::vm::code::Instruction::CallInternal {
+                    ident: $crate::value::identifier(stringify!($ident)),
+                    num_args: $num_args,
+                },
+            )
+            $($rest)*
+        )
+    };
+    ( @inner ($($accum:tt)*) ) => {
+        vec![$($accum)*]
+    };
+    ( $($input:tt)* ) => {
+        instructions!( @inner () $($input)* )
+    }
+}
