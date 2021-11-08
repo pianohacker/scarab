@@ -11,27 +11,27 @@ use crate::vm::code;
 use crate::vm::Vm;
 
 pub(crate) struct Builtin {
-    pub run: &'static (dyn Fn(&mut Vm<'_>) + Sync),
+    pub run: &'static (dyn Fn(&mut Vm<'_>, code::RegisterOffset) + Sync),
 }
 
 static BUILTINS: phf::Map<&'static str, Builtin> = phf_map! {
     "+" => Builtin {
-        run: &|vm| {
+        run: &|vm, num_args| {
             vm.registers[0] = Value::Integer(
-                vm.registers.iter().map(|v| v.as_isize().unwrap()).sum(),
+                vm.registers.iter().take(num_args as usize).map(|v| v.as_isize().unwrap()).sum(),
             );
         },
     },
     "-" => Builtin {
-        run: &|vm| {
+        run: &|vm, num_args| {
             vm.registers[0] = Value::Integer(
-                vm.registers.iter().map(|v| v.as_isize().unwrap()).reduce(|a, b| a -b).unwrap(),
+                vm.registers.iter().take(num_args as usize).map(|v| v.as_isize().unwrap()).reduce(|a, b| a -b).unwrap(),
             );
         },
     },
     "debug" => Builtin {
-        run: &|vm| {
-            let output: Vec<_> = vm.registers.iter().map(|v| format!("{}", v)).collect();
+        run: &|vm, num_args| {
+            let output: Vec<_> = vm.registers.iter().take(num_args as usize).map(|v| format!("{}", v)).collect();
             write!(vm.debug_output, "{}\n", output.join(" ")).unwrap();
 
             vm.registers[0] = Value::Nil;

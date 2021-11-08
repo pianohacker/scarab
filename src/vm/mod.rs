@@ -82,7 +82,11 @@ impl<'a> Vm<'a> {
                     self.registers[dest] = value;
                     Ok(())
                 }
-                CallInternal { ident, num_args } => self.call_internal(ident, num_args),
+                CallInternal {
+                    ident,
+                    base,
+                    num_args,
+                } => self.call_internal(ident, base, num_args),
             } {
                 return Err(Error::from_internal(e, cur_pc));
             }
@@ -94,13 +98,14 @@ impl<'a> Vm<'a> {
     fn call_internal(
         &mut self,
         ident: value::Identifier,
+        base: code::RegisterId,
         num_args: code::RegisterOffset,
     ) -> IResult<()> {
-        self.registers.push_window(num_args);
+        self.registers.push_window_starting(base);
 
         (builtins::get(&ident)
             .ok_or(ErrorInternal::UnknownInternalFunction(ident.clone()))?
-            .run)(self);
+            .run)(self, num_args);
 
         self.registers.pop_window();
 
@@ -154,7 +159,7 @@ mod tests {
                 alloc 2;
                 load 0 42;
                 load 1 93;
-                call + 2;
+                call + 0 2;
             })?,
             "
 [
@@ -179,9 +184,8 @@ mod tests {
                 load 0 22;
                 load 1 100;
                 load 2 89;
-                call - 2;
-                alloc -1;
-                call + 2;
+                call - 1 2;
+                call + 0 2;
             })?,
             "
 [
@@ -190,6 +194,9 @@ mod tests {
     ),
     Integer(
         11,
+    ),
+    Integer(
+        89,
     ),
 ]
 "
@@ -203,6 +210,7 @@ mod tests {
         assert_err_matches_regex!(
             run_into_registers(vec![I::CallInternal {
                 ident: value::identifier("unknown"),
+                base: 0,
                 num_args: 0,
             },]),
             "UnknownInternal"
@@ -219,7 +227,7 @@ mod tests {
                 load 0 "blah";
                 load 1 100;
                 load 2 (abc);
-                call debug 3;
+                call debug 0 3;
             })?,
             r#"
 "blah" 100 (abc)

@@ -27,8 +27,9 @@ pub enum Error {
 type Result<T> = std::result::Result<T, Error>;
 
 struct RegisterAllocator {
-    next_register: code::RegisterId,
-    allocations: HashSet<RegisterAllocation>,
+    highest_used: code::RegisterId,
+    current: RegisterAllocation,
+    stack: Vec<RegisterAllocation>,
 }
 
 type RegisterAllocation = Range<code::RegisterId>;
@@ -36,80 +37,57 @@ type RegisterAllocation = Range<code::RegisterId>;
 impl RegisterAllocator {
     fn new() -> Self {
         Self {
-            next_register: 0,
-            allocations: HashSet::new(),
+            highest_used: 0,
+            current: 0..0,
+            stack: Vec::new(),
         }
     }
 
-    fn highest_allocation_end(&self) -> code::RegisterId {
-        self.allocations.iter().map(|r| r.end).max().unwrap_or(0)
+    fn push_range(&mut self) {
+        let start = self.current.end;
+        self.stack.push(std::mem::take(&mut self.current));
+        self.current = start..start;
     }
 
-    fn alloc_delta(&self, prev_max: code::RegisterId) -> code::RegisterOffset {
-        self.highest_allocation_end() as code::RegisterOffset - prev_max as code::RegisterOffset
+    fn pop_range(&mut self) {
+        self.current = self.stack.pop().unwrap();
     }
 
-    fn alloc_registers(
-        &mut self,
-        count: code::RegisterOffset,
-    ) -> (code::RegisterOffset, RegisterAllocation) {
-        let allocation = self.next_register
-            ..((self.next_register as code::RegisterOffset + count) as code::RegisterId);
-
-        let prev_max = self.highest_allocation_end();
-        self.allocations.insert(allocation.clone());
-
-        (self.alloc_delta(prev_max), allocation)
+    fn extend_to(&mut self, used: code::RegisterId) {
+        assert!(used >= self.current.end);
+        self.current.end = used + 1;
     }
 
-    fn use_register(&mut self) -> code::RegisterId {
-        let register_id = self.next_register;
-        self.next_register += 1;
-        assert!(register_id < self.highest_allocation_end());
+    fn current(&self) -> code::RegisterId {
+        self.current.end
+    }
+
+    fn alloc(&mut self) -> code::RegisterId {
+        let register_id = self.current.end;
+        self.current.end += 1;
+        self.highest_used = register_id;
 
         register_id
     }
-
-    fn drop_allocation(&mut self, allocation: RegisterAllocation) -> code::RegisterOffset {
-        let prev_max = self.highest_allocation_end();
-        self.allocations.remove(&allocation);
-
-        self.next_register = self.next_register.min(self.highest_allocation_end());
-
-        self.alloc_delta(prev_max)
-    }
 }
 
-struct CompilerVisitor {
-    output: Vec<Instruction>,
+struct CompilerVisitor<'o> {
+    output: Option<&'o mut Vec<Instruction>>,
     allocator: RegisterAllocator,
 }
 
-impl CompilerVisitor {
-    fn new() -> Self {
+impl<'o> CompilerVisitor<'o> {
+    fn new(output: Option<&'o mut Vec<Instruction>>) -> Self {
         Self {
-            output: Vec::new(),
+            output,
             allocator: RegisterAllocator::new(),
         }
     }
 
-    fn push_alloc_registers(&mut self, diff: code::RegisterOffset) {
-        if diff != 0 {
-            self.output
-                .push(code::Instruction::AllocRegisters { count: diff });
+    fn push(&mut self, i: code::Instruction) {
+        if let Some(ref mut output) = self.output {
+            output.push(i);
         }
-    }
-
-    fn alloc_registers(&mut self, count: code::RegisterOffset) -> RegisterAllocation {
-        let (diff, allocation) = self.allocator.alloc_registers(count);
-        self.push_alloc_registers(diff);
-
-        allocation
-    }
-
-    fn drop_allocation(&mut self, allocation: RegisterAllocation) {
-        let diff = self.allocator.drop_allocation(allocation);
-        self.push_alloc_registers(diff);
     }
 
     fn visit_call(&mut self, l: &Value, r: &Value) -> Result<()> {
@@ -121,18 +99,21 @@ impl CompilerVisitor {
         let args: Vec<_> = r.iter_list().collect::<value::Result<Vec<_>>>()?;
         let num_args = args.len() as code::RegisterOffset;
 
-        let allocation = self.alloc_registers(num_args);
+        self.allocator.push_range();
+        let base = self.allocator.current();
 
         for arg in args.into_iter() {
             self.visit_expr(arg)?;
         }
 
-        self.output.push(CallInternal {
+        self.push(CallInternal {
             ident: fn_name.clone(),
+            base,
             num_args,
         });
 
-        self.drop_allocation(allocation);
+        self.allocator.pop_range();
+        self.allocator.extend_to(base);
 
         Ok(())
     }
@@ -142,9 +123,9 @@ impl CompilerVisitor {
 
         match expr {
             Value::Integer(_) => {
-                let dest = self.allocator.use_register();
+                let dest = self.allocator.alloc();
 
-                self.output.push(LoadImmediate {
+                self.push(LoadImmediate {
                     dest,
                     value: expr.clone(),
                 });
@@ -160,13 +141,24 @@ impl CompilerVisitor {
 pub fn compile(program: Value) -> Result<Vec<Instruction>> {
     use Instruction::*;
 
-    let mut visitor = CompilerVisitor::new();
+    let mut register_use_visitor = CompilerVisitor::new(None);
+
+    for maybe_item in program.iter_list() {
+        register_use_visitor.visit_expr(maybe_item?)?;
+    }
+
+    let mut output = Vec::new();
+    output.push(AllocRegisters {
+        count: register_use_visitor.allocator.highest_used as code::RegisterOffset + 1,
+    });
+
+    let mut visitor = CompilerVisitor::new(Some(&mut output));
 
     for maybe_item in program.iter_list() {
         visitor.visit_expr(maybe_item?)?;
     }
 
-    Ok(visitor.output)
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -192,8 +184,7 @@ alloc 3;
 load 0 1;
 load 1 2;
 load 2 3;
-call + 3;
-alloc -3;
+call + 0 3;
 "
         );
 
@@ -205,15 +196,12 @@ alloc -3;
         snapshot!(
             compile_display(value!(((+ 1 (+ 2 3)))))?,
             "
-alloc 2;
+alloc 3;
 load 0 1;
-alloc 1;
 load 1 2;
 load 2 3;
-call + 2;
-alloc -1;
-call + 2;
-alloc -2;
+call + 1 2;
+call + 0 2;
 "
         );
 
@@ -225,18 +213,15 @@ alloc -2;
         snapshot!(
             compile_display(value!(((+ 1 (+ 2 3) (+ 4 5)))))?,
             "
-alloc 3;
+alloc 4;
 load 0 1;
 load 1 2;
 load 2 3;
-call + 2;
-alloc 2;
-load 3 4;
-load 4 5;
-call + 2;
-alloc -2;
-call + 3;
-alloc -3;
+call + 1 2;
+load 2 4;
+load 3 5;
+call + 2 2;
+call + 0 3;
 "
         );
 

@@ -52,6 +52,12 @@ impl Registers {
         self.offset = (self.values.len() as RegisterOffset - size).max(0) as usize
     }
 
+    pub fn push_window_starting(&mut self, at: RegisterId) {
+        self.offset_stack.push(self.offset);
+
+        self.offset = (at as RegisterOffset) as usize
+    }
+
     pub fn pop_window(&mut self) {
         self.offset = self.offset_stack.pop().unwrap_or(0);
     }
@@ -80,6 +86,7 @@ pub enum Instruction {
     // the function.
     CallInternal {
         ident: Identifier,
+        base: RegisterId,
         num_args: RegisterOffset,
     },
 }
@@ -91,16 +98,19 @@ impl std::fmt::Display for Instruction {
         match self {
             AllocRegisters { count } => write!(f, "alloc {}", count),
             LoadImmediate { dest, value } => write!(f, "load {} {}", dest, value),
-            CallInternal { ident, num_args } => write!(f, "call {} {}", ident, num_args),
+            CallInternal {
+                ident,
+                base,
+                num_args,
+            } => write!(f, "call {} {} {}", ident, base, num_args),
         }
     }
 }
 
 #[macro_export]
-macro_rules! instructions {
-    ( @inner ($($accum:tt)*) alloc $count:expr; $($rest:tt)* ) => {
-        instructions!(
-            @inner
+macro_rules! instructions_inner {
+    ( ($($accum:tt)*) alloc $count:expr; $($rest:tt)* ) => {
+        crate::instructions_inner!(
             (
                 $($accum)*
                 $crate::vm::code::Instruction::AllocRegisters {
@@ -110,9 +120,8 @@ macro_rules! instructions {
             $($rest)*
         )
     };
-    ( @inner ($($accum:tt)*) load $dest:tt $value:tt; $($rest:tt)* ) => {
-        instructions!(
-            @inner
+    ( ($($accum:tt)*) load $dest:tt $value:tt; $($rest:tt)* ) => {
+        crate::instructions_inner!(
             (
                 $($accum)*
                 $crate::vm::code::Instruction::LoadImmediate {
@@ -123,23 +132,27 @@ macro_rules! instructions {
             $($rest)*
         )
     };
-    ( @inner ($($accum:tt)*) call $ident:tt $num_args:expr; $($rest:tt)* ) => {
-        instructions!(
-            @inner
+    ( ($($accum:tt)*) call $ident:tt $base:tt $num_args:expr; $($rest:tt)* ) => {
+        crate::instructions_inner!(
             (
                 $($accum)*
                 $crate::vm::code::Instruction::CallInternal {
                     ident: $crate::value::identifier(stringify!($ident)),
+                    base: $base,
                     num_args: $num_args,
                 },
             )
             $($rest)*
         )
     };
-    ( @inner ($($accum:tt)*) ) => {
+    ( ($($accum:tt)*) ) => {
         vec![$($accum)*]
     };
+}
+
+#[macro_export]
+macro_rules! instructions {
     ( $($input:tt)* ) => {
-        instructions!( @inner () $($input)* )
+        crate::instructions_inner!( () $($input)* )
     }
 }
