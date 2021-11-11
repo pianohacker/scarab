@@ -8,8 +8,11 @@ use thiserror::Error;
 
 use crate::value::{Identifier, Value};
 
+pub type Pc = usize;
+pub type PcOffset = isize;
+
 pub type RegisterId = u8;
-pub type RegisterOffset = i16;
+pub type RegisterOffset = i8;
 
 #[derive(Debug)]
 pub struct Registers {
@@ -85,17 +88,33 @@ pub enum Instruction {
     AllocRegisters {
         count: RegisterOffset,
     },
+
     // Load a register with the given value.
     LoadImmediate {
         dest: RegisterId,
         value: Value,
     },
+
+    // Copy a register's value to another.
+    Copy {
+        dest: RegisterId,
+        src: RegisterId,
+    },
+
     // Call the given function, passing the last `num_args` registers as the registers visible to
     // the function.
     CallInternal {
         ident: Identifier,
         base: RegisterId,
         num_args: RegisterOffset,
+    },
+
+    // Skip over the given number of instructions if the given register evaluates to `true.
+    //
+    // A `distance` of 0 is a no-op, whereas a distance of -1 is an infinite loop.
+    JumpIf {
+        cond: RegisterId,
+        distance: PcOffset,
     },
 }
 
@@ -106,11 +125,13 @@ impl std::fmt::Display for Instruction {
         match self {
             AllocRegisters { count } => write!(f, "alloc {}", count),
             LoadImmediate { dest, value } => write!(f, "load {} {}", dest, value),
+            Copy { dest, src } => write!(f, "copy {} {}", dest, src),
             CallInternal {
                 ident,
                 base,
                 num_args,
             } => write!(f, "call {} {} {}", ident, base, num_args),
+            JumpIf { cond, distance } => write!(f, "jump_if {} {} ", cond, distance),
         }
     }
 }
@@ -140,6 +161,18 @@ macro_rules! instructions_inner {
             $($rest)*
         )
     };
+    ( ($($accum:tt)*) copy $dest:tt $src:tt; $($rest:tt)* ) => {
+        crate::instructions_inner!(
+            (
+                $($accum)*
+                $crate::vm::code::Instruction::Copy {
+                    dest: $dest,
+                    src: $src,
+                },
+            )
+            $($rest)*
+        )
+    };
     ( ($($accum:tt)*) call $ident:tt $base:tt $num_args:expr; $($rest:tt)* ) => {
         crate::instructions_inner!(
             (
@@ -148,6 +181,18 @@ macro_rules! instructions_inner {
                     ident: $crate::value::identifier(stringify!($ident)),
                     base: $base,
                     num_args: $num_args,
+                },
+            )
+            $($rest)*
+        )
+    };
+    ( ($($accum:tt)*) jump_if $cond:tt $distance:expr; $($rest:tt)* ) => {
+        crate::instructions_inner!(
+            (
+                $($accum)*
+                $crate::vm::code::Instruction::JumpIf {
+                    cond: $cond,
+                    distance: $distance,
                 },
             )
             $($rest)*

@@ -29,6 +29,13 @@ static BUILTINS: phf::Map<&'static str, Builtin> = phf_map! {
             );
         },
     },
+    "<" => Builtin {
+        run: &|vm, num_args| {
+            vm.registers[0] = Value::Boolean(
+                vm.registers[0].as_isize().unwrap() < vm.registers[1].as_isize().unwrap()
+            );
+        },
+    },
     "debug" => Builtin {
         run: &|vm, num_args| {
             let output: Vec<_> = vm.registers.iter().take(num_args as usize).map(|v| format!("{}", v)).collect();

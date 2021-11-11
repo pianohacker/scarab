@@ -12,19 +12,17 @@ use thiserror::Error;
 use crate::builtins;
 use crate::value::{self, Value};
 
-type Pc = usize;
-
 type Result<T> = std::result::Result<T, Error>;
 type IResult<T> = std::result::Result<T, ErrorInternal>;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Error {
     error: ErrorInternal,
-    pc: Pc,
+    pc: code::Pc,
 }
 
 impl Error {
-    fn from_internal(error: ErrorInternal, pc: Pc) -> Self {
+    fn from_internal(error: ErrorInternal, pc: code::Pc) -> Self {
         Error { error, pc }
     }
 }
@@ -82,11 +80,22 @@ impl<'a> Vm<'a> {
                     self.registers[dest] = value;
                     Ok(())
                 }
+                Copy { dest, src } => {
+                    self.registers[dest] = self.registers[src].clone();
+                    Ok(())
+                }
                 CallInternal {
                     ident,
                     base,
                     num_args,
                 } => self.call_internal(ident, base, num_args),
+                JumpIf { cond, distance } => {
+                    if self.registers[cond] == Value::Boolean(true) {
+                        pc = pc.wrapping_add(distance as code::Pc);
+                    }
+
+                    Ok(())
+                }
             } {
                 return Err(Error::from_internal(e, cur_pc));
             }
@@ -150,6 +159,29 @@ mod tests {
         }
 
         Ok(String::from_utf8(debug_output).unwrap())
+    }
+
+    #[test]
+    fn copy() -> Result<()> {
+        snapshot!(
+            run_into_registers(instructions! {
+                alloc 2;
+                load 0 22;
+                copy 1 0;
+            })?,
+            "
+[
+    Integer(
+        22,
+    ),
+    Integer(
+        22,
+    ),
+]
+"
+        );
+
+        Ok(())
     }
 
     #[test]
@@ -233,6 +265,69 @@ mod tests {
 "blah" 100 (abc)
 
 "#
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn jump_if_basic() -> Result<()> {
+        snapshot!(
+            run_into_registers(instructions! {
+                alloc 3;
+                load 0 true;
+                jump_if 0 1;
+                load 1 1;
+
+                load 0 false;
+                jump_if 0 1;
+                load 2 2;
+            })?,
+            "
+[
+    Boolean(
+        false,
+    ),
+    Nil,
+    Integer(
+        2,
+    ),
+]
+"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn jump_if_loop() -> Result<()> {
+        snapshot!(
+            run_into_registers(instructions! {
+                alloc 4;
+                load 0 0;
+                load 1 1;
+                load 3 10;
+                call + 0 2;
+                copy 2 0;
+                call < 2 2;
+                jump_if 2 -4;
+            })?,
+            "
+[
+    Integer(
+        10,
+    ),
+    Integer(
+        1,
+    ),
+    Boolean(
+        false,
+    ),
+    Integer(
+        10,
+    ),
+]
+"
         );
 
         Ok(())
