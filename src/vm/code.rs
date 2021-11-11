@@ -6,7 +6,7 @@
 
 use thiserror::Error;
 
-use crate::value::{Identifier, Value};
+use crate::value::{self, Identifier, Value};
 
 pub type Pc = usize;
 pub type PcOffset = isize;
@@ -202,4 +202,13 @@ macro_rules! instructions {
     ( $($input:tt)* ) => {
         crate::instructions_inner!( () $($input)* )
     }
+}
+
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum Error {
+    #[error("{source}")]
+    Value {
+        #[from]
+        source: value::Error,
+    },
 }

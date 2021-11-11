@@ -84,6 +84,13 @@ impl Value {
         }
     }
 
+    pub fn try_as_integer(&self) -> Result<isize> {
+        match self {
+            Value::Integer(i) => Ok(*i),
+            _ => Err(Error::ExpectedType(Type::Integer, self.type_())),
+        }
+    }
+
     pub fn try_as_cell(&self) -> Result<(&Value, &Value)> {
         match self {
             Value::Cell(ref l, ref r) => Ok((l, r)),
@@ -108,13 +115,6 @@ impl Value {
                 }
             },
         })
-    }
-
-    pub fn as_isize(&self) -> Option<isize> {
-        match self {
-            Value::Integer(i) => Some(*i),
-            _ => None,
-        }
     }
 
     pub fn type_(&self) -> Type {
@@ -235,6 +235,10 @@ macro_rules! value {
         $crate::value::Value::Identifier($crate::value::identifier(stringify!($ident)))
     };
 
+    (<) => {
+        $crate::value::Value::Identifier($crate::value::identifier("<"))
+    };
+
     ($value:expr) => {
         Value::from($value)
     };
@@ -289,6 +293,7 @@ mod tests {
     fn identifier_macro() {
         assert_eq!(Value::Identifier("abc".to_string()), value!(abc));
         assert_eq!(Value::Identifier("+".to_string()), value!(+));
+        assert_eq!(Value::Identifier("<".to_string()), value!(<));
     }
 
     #[test]
@@ -299,12 +304,6 @@ mod tests {
     #[test]
     fn integer_macro() {
         assert_eq!(Value::Integer(4567), value!(4567));
-    }
-
-    #[test]
-    fn integer_conversion() {
-        assert_eq!(Value::Integer(42).as_isize(), Some(42));
-        assert_eq!(Value::Nil.as_isize(), None);
     }
 
     #[test]

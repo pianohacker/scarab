@@ -6,34 +6,52 @@
 
 use phf::phf_map;
 
-use crate::value::{Identifier, Value};
+use crate::value::{self, Identifier, Value};
 use crate::vm::code;
 use crate::vm::Vm;
 
 pub(crate) struct Builtin {
-    pub run: &'static (dyn Fn(&mut Vm<'_>, code::RegisterOffset) + Sync),
+    pub run: &'static (dyn Fn(&mut Vm<'_>, code::RegisterOffset) -> Result<(), code::Error> + Sync),
+}
+
+fn iter_as_integers(
+    registers: &code::Registers,
+    num_args: code::RegisterOffset,
+) -> Result<impl Iterator<Item = isize>, value::Error> {
+    Ok(registers
+        .iter()
+        .take(num_args as usize)
+        .map(|v| v.try_as_integer())
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter())
 }
 
 static BUILTINS: phf::Map<&'static str, Builtin> = phf_map! {
     "+" => Builtin {
         run: &|vm, num_args| {
             vm.registers[0] = Value::Integer(
-                vm.registers.iter().take(num_args as usize).map(|v| v.as_isize().unwrap()).sum(),
+                iter_as_integers(&vm.registers, num_args)?.sum(),
             );
+
+            Ok(())
         },
     },
     "-" => Builtin {
         run: &|vm, num_args| {
             vm.registers[0] = Value::Integer(
-                vm.registers.iter().take(num_args as usize).map(|v| v.as_isize().unwrap()).reduce(|a, b| a -b).unwrap(),
+                iter_as_integers(&vm.registers, num_args)?.reduce(|a, b| a -b).unwrap(),
             );
+
+            Ok(())
         },
     },
     "<" => Builtin {
         run: &|vm, num_args| {
             vm.registers[0] = Value::Boolean(
-                vm.registers[0].as_isize().unwrap() < vm.registers[1].as_isize().unwrap()
+                vm.registers[0].try_as_integer()? < vm.registers[1].try_as_integer()?
             );
+
+            Ok(())
         },
     },
     "debug" => Builtin {
@@ -42,6 +60,8 @@ static BUILTINS: phf::Map<&'static str, Builtin> = phf_map! {
             write!(vm.debug_output, "{}\n", output.join(" ")).unwrap();
 
             vm.registers[0] = Value::Nil;
+
+            Ok(())
         }
     },
 };

@@ -39,6 +39,11 @@ impl std::fmt::Display for Error {
 enum ErrorInternal {
     #[error("unknown internal function: {0}")]
     UnknownInternalFunction(value::Identifier),
+    #[error("{source}")]
+    Runtime {
+        #[from]
+        source: code::Error,
+    },
     #[error("placeholder")]
     Placeholder,
 }
@@ -114,7 +119,7 @@ impl<'a> Vm<'a> {
 
         (builtins::get(&ident)
             .ok_or(ErrorInternal::UnknownInternalFunction(ident.clone()))?
-            .run)(self, num_args);
+            .run)(self, num_args)?;
 
         self.registers.pop_window();
 
@@ -203,6 +208,21 @@ mod tests {
     ),
 ]
 "
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_add() -> Result<()> {
+        assert_err_matches_regex!(
+            run_into_registers(instructions! {
+                alloc 2;
+                load 0 true;
+                load 1 "abc";
+                call + 0 2;
+            }),
+            "ExpectedType"
         );
 
         Ok(())
