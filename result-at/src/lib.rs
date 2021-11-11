@@ -27,7 +27,7 @@ use thiserror::Error;
 /// Can be used directly with [`next()`](Self::next), but [`reader()`](Self::reader) allows use of many utility methods.
 pub trait Source: Sized {
     type Output;
-    type Error: std::error::Error;
+    type Error;
 
     fn next(&mut self) -> ResultAt<Self::Output, Self::Error>;
 
@@ -86,6 +86,58 @@ impl<I: Iterator<Item = char>> Source for CharSource<I> {
     }
 }
 
+/// Create a [`Source`] from a function.
+///
+/// The function will be called repeatedly, and should produce a [`ResultAt<T, E>`].
+///
+/// # Examples
+///
+/// ```
+/// # use result_at::*;
+/// use std::convert::Infallible;
+/// let mut once = false;
+/// let mut reader = source_from_fn(|| -> ResultAt<_, Infallible> {
+///     if once {
+///         NoneAt((1, 2))
+///     } else {
+///         once = true;
+///         OkAt(true, (1, 1))
+///     }
+/// }).reader();
+/// assert_eq!(reader.next(), OkAt(true, (1, 1)));
+/// assert_eq!(reader.next(), NoneAt((1, 2)));
+///
+/// let mut once = false;
+/// let mut reader = source_from_fn(|| {
+///     if once {
+///         ErrAt("failed!", (1, 2))
+///     } else {
+///         once = true;
+///         OkAt(true, (1, 1))
+///     }
+/// }).reader();
+/// assert_eq!(reader.next(), OkAt(true, (1, 1)));
+/// assert_eq!(reader.next(), ErrAt("failed!", (1, 2)));
+/// ```
+pub fn source_from_fn<T, E>(
+    next_op: impl FnMut() -> ResultAt<T, E>,
+) -> impl Source<Output = T, Error = E> {
+    SourceFromFn { next_op }
+}
+
+struct SourceFromFn<T, E, O: FnMut() -> ResultAt<T, E>> {
+    next_op: O,
+}
+
+impl<T, E, O: FnMut() -> ResultAt<T, E>> Source for SourceFromFn<T, E, O> {
+    type Output = T;
+    type Error = E;
+
+    fn next(&mut self) -> ResultAt<T, E> {
+        (self.next_op)()
+    }
+}
+
 /// Utility wrapper around a [`Source`].
 pub struct Reader<S: Source> {
     reader: S,
@@ -115,7 +167,7 @@ impl<S: Source> Reader<S> {
     pub fn items_while_successful(&mut self) -> impl Iterator<Item = S::Output> + '_ {
         std::iter::from_fn(move || {
             if let OkAt(_, _) = self.peek() {
-                return Some(self.next().unwrap().0);
+                return Some(self.next().unwrap_or_else(|| unreachable!()).0);
             }
 
             None
@@ -133,7 +185,7 @@ impl<S: Source> Reader<S> {
         std::iter::from_fn(move || {
             if let OkAt(x, _) = self.peek() {
                 if (predicate)(&x) {
-                    return Some(self.next().unwrap().0);
+                    return Some(self.next().unwrap_or_else(|| unreachable!()).0);
                 }
             }
 
@@ -180,10 +232,34 @@ pub enum ResultAt<T, E> {
     NoneAt((usize, usize)),
 }
 
-use ResultAt::*;
+pub use ResultAt::*;
 
-impl<T, E: std::fmt::Debug> ResultAt<T, E> {
-    /// Wraps [`Result::and_then()`] for the contained result.
+#[must_use]
+impl<T, E> ResultAt<T, E> {
+    /// Passes the contained value to the given closure on [`OkAt`], passing through [`ErrAt`] and
+    /// [`NoneAt`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use result_at::*;
+    /// assert_eq!(
+    ///     OkAt::<_, &str>(42, (1, 1)).and_then(|x| Ok(x * 2)),
+    ///     OkAt::<_, &str>(84, (1, 1))
+    /// );
+    /// assert_eq!(
+    ///     OkAt::<_, &str>(42, (1, 1)).and_then(|_| -> Result<usize, &str> {
+    ///         Err("oh no")
+    ///     }),
+    ///     ErrAt::<_, &str>("oh no", (1, 1))
+    /// );
+    /// assert_eq!(
+    ///     NoneAt::<_, &str>((1, 1)).and_then(|x: usize| -> Result<usize, &str> {
+    ///         Ok(x * 2)
+    ///     }),
+    ///     NoneAt::<_, &str>((1, 1))
+    /// );
+    /// ```
     pub fn and_then<O, E2: From<E>>(self, op: impl FnOnce(T) -> Result<O, E2>) -> ResultAt<O, E2> {
         match self {
             OkAt(x, at) => match op(x) {
@@ -197,6 +273,28 @@ impl<T, E: std::fmt::Debug> ResultAt<T, E> {
 
     /// Similar to [`and_then()`](Self::and_then), but passes the location to the closure and expects a
     /// [`ResultAt`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use result_at::*;
+    /// assert_eq!(
+    ///     OkAt::<_, &str>(42, (1, 1)).and_then_at(|x, _| OkAt(x * 2, (4, 4))),
+    ///     OkAt::<_, &str>(84, (4, 4))
+    /// );
+    /// assert_eq!(
+    ///     OkAt::<_, &str>(42, (1, 1)).and_then_at(|_, at| -> ResultAt<usize, &str> {
+    ///         ErrAt("oh no", at)
+    ///     }),
+    ///     ErrAt::<_, &str>("oh no", (1, 1))
+    /// );
+    /// assert_eq!(
+    ///     NoneAt::<_, &str>((1, 1)).and_then_at(|_: usize, _| -> ResultAt<usize, &str> {
+    ///         unreachable!();
+    ///     }),
+    ///     NoneAt::<_, &str>((1, 1))
+    /// );
+    /// ```
     pub fn and_then_at<O, E2: From<E>>(
         self,
         op: impl FnOnce(T, (usize, usize)) -> ResultAt<O, E2>,
@@ -208,7 +306,7 @@ impl<T, E: std::fmt::Debug> ResultAt<T, E> {
         }
     }
 
-    /// Wraps [`Result::as_ref()`] for the contained result.
+    /// Returns a [`ResultAt`] with a reference to the contained `T` or `E`.
     pub fn as_ref(&self) -> ResultAt<&T, &E> {
         match *self {
             OkAt(ref x, at) => OkAt(x, at),
@@ -236,7 +334,10 @@ impl<T, E: std::fmt::Debug> ResultAt<T, E> {
     }
 
     /// Returns the contained `OkAt` value and position or panics.
-    pub fn unwrap(self) -> (T, (usize, usize)) {
+    pub fn unwrap(self) -> (T, (usize, usize))
+    where
+        E: std::fmt::Debug,
+    {
         match self {
             OkAt(x, at) => (x, at),
             ErrAt(e, at) => panic!(
@@ -244,6 +345,15 @@ impl<T, E: std::fmt::Debug> ResultAt<T, E> {
                 e, at
             ),
             NoneAt(at) => panic!("called unwrap on a ResultAt containing NoneAt({:?})", at),
+        }
+    }
+
+    /// Returns the contained `OkAt` value or computes it from a closure.
+    pub fn unwrap_or_else(self, op: impl FnOnce() -> T) -> (T, (usize, usize)) {
+        match self {
+            OkAt(x, at) => (x, at),
+            ErrAt(_, at) => (op(), at),
+            NoneAt(at) => (op(), at),
         }
     }
 
