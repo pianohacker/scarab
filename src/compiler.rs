@@ -4,7 +4,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use std::collections::HashSet;
 use std::ops::Range;
 use thiserror::Error;
 
@@ -141,22 +140,24 @@ impl<'o> CompilerVisitor<'o> {
 pub fn compile(program: Value) -> Result<Vec<Instruction>> {
     use Instruction::*;
 
-    let mut register_use_visitor = CompilerVisitor::new(None);
-
-    for maybe_item in program.iter_list() {
-        register_use_visitor.visit_expr(maybe_item?)?;
-    }
-
     let mut output = Vec::new();
-    output.push(AllocRegisters {
-        count: register_use_visitor.allocator.highest_used as code::RegisterOffset + 1,
-    });
 
-    let mut visitor = CompilerVisitor::new(Some(&mut output));
+    let num_registers_used = {
+        let mut visitor = CompilerVisitor::new(Some(&mut output));
 
-    for maybe_item in program.iter_list() {
-        visitor.visit_expr(maybe_item?)?;
-    }
+        for maybe_item in program.iter_list() {
+            visitor.visit_expr(maybe_item?)?;
+        }
+
+        visitor.allocator.highest_used as code::RegisterOffset + 1
+    };
+
+    output.insert(
+        0,
+        AllocRegisters {
+            count: num_registers_used,
+        },
+    );
 
     Ok(output)
 }

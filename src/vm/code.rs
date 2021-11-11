@@ -4,6 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use thiserror::Error;
+
 use crate::value::{Identifier, Value};
 
 pub type RegisterId = u8;
@@ -71,8 +73,115 @@ impl Registers {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Instruction {
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum InstructionError {
+    #[error("attempt to resolve tentative instruction with missing field {0}")]
+    MissingTentativeField(String),
+}
+
+macro_rules! instruction_kind {
+    (
+        ($($upper_state:tt)*)
+        ($($fields_accum:tt)*)
+        ($($field_names_accum:tt)*)
+        ($($tentative_fields_accum:tt)*)
+        ($($try_into_accum:tt)*)
+        $kind_name:ident {
+            $name:ident: $type:ty,
+            $($rest:tt)*
+        }
+    ) => {
+        instruction_kind! {
+            ($($upper_state)*)
+            ($($fields_accum)* $name: $type, )
+            ($($field_names_accum)* $name, )
+            ($($tentative_fields_accum)* $name: Option<$type>, )
+            ($($try_into_accum)* $name: $name.ok_or(
+                    InstructionError::MissingTentativeField(
+                        stringify!($name).to_string()
+                    )
+            )?,)
+            $kind_name
+            { $($rest)* }
+        }
+    };
+
+    (
+        (
+            ($($upper_accum:tt)*)
+            ($($upper_tentative_accum:tt)*)
+            ($($upper_try_into_accum:tt)*)
+            ($($upper_rest:tt)*)
+        )
+        ($($fields_accum:tt)*)
+        ($($field_names_accum:tt)*)
+        ($($tentative_fields_accum:tt)*)
+        ($($try_into_accum:tt)*)
+        $kind_name:ident {}
+    ) => {
+        instruction_definitions_inner! {
+            ($($upper_accum)* $kind_name { $($fields_accum)* }, )
+            ($($upper_tentative_accum)* $kind_name { $($tentative_fields_accum)* }, )
+            (
+                $($upper_try_into_accum)*
+                TentativeInstruction::$kind_name { $($field_names_accum)* } =>
+                    Ok(Instruction::$kind_name{ $($try_into_accum)* }),
+            )
+            $($upper_rest)*
+        }
+    };
+}
+
+macro_rules! instruction_definitions_inner {
+    ( ($($accum:tt)*) ($($tentative_accum:tt)*) ($($try_into_accum:tt)*) $kind_name:ident $kind_def:tt, $($rest:tt)* ) => {
+        instruction_kind! {
+            (
+                ($($accum)*)
+                ($($tentative_accum)*)
+                ($($try_into_accum)*)
+                ($($rest)*)
+            )
+            ()
+            ()
+            ()
+            ()
+            $kind_name $kind_def
+        }
+    };
+    ( ($($accum:tt)*) ($($tentative_accum:tt)*) ($($try_into_accum:tt)*) ) => {
+        // compile_error!(
+        //     stringify!(
+                #[derive(Clone, Debug, PartialEq, Eq)]
+                pub enum Instruction {
+                    $($accum)*
+                }
+
+                #[derive(Clone, Debug, PartialEq, Eq)]
+                pub enum TentativeInstruction {
+                    $($tentative_accum)*
+                }
+
+                impl std::convert::TryInto<Instruction> for TentativeInstruction {
+                    type Error = InstructionError;
+
+                    fn try_into(self) -> std::result::Result<Instruction, InstructionError> {
+                        match self {
+                            $($try_into_accum)*
+                        }
+                    }
+                }
+            // )
+        // );
+    };
+}
+
+macro_rules! instruction_definitions {
+    ( $($input:tt)+ ) => {
+        instruction_definitions_inner!{ () () () $($input)+ }
+    };
+}
+
+instruction_definitions! {
     // Allocate or drop`count`registers.
     AllocRegisters {
         count: RegisterOffset,
