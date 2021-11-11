@@ -76,12 +76,6 @@ impl Registers {
     }
 }
 
-#[derive(Error, Debug, PartialEq, Eq)]
-pub enum InstructionError {
-    #[error("attempt to resolve tentative instruction with missing field {0}")]
-    MissingTentativeField(String),
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Instruction {
     // Allocate or drop`count`registers.
