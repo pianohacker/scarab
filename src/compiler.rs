@@ -19,6 +19,8 @@ pub enum Error {
         #[from]
         source: crate::value::Error,
     },
+    #[error("unknown internal function: {0}")]
+    UnknownInternalFunction(value::Identifier),
     #[error("placeholder")]
     Placeholder,
 }
@@ -64,38 +66,83 @@ impl RegisterAllocator {
     fn alloc(&mut self) -> code::RegisterId {
         let register_id = self.current.end;
         self.current.end += 1;
-        self.highest_used = register_id;
+
+        if register_id > self.highest_used {
+            self.highest_used = register_id;
+        }
 
         register_id
     }
 }
 
-struct CompilerVisitor<'o> {
-    output: Option<&'o mut Vec<Instruction>>,
-    allocator: RegisterAllocator,
+struct CompilerVisitor<'o, 'a> {
+    output: &'o mut Vec<Instruction>,
+    allocator: &'a mut RegisterAllocator,
 }
 
-impl<'o> CompilerVisitor<'o> {
-    fn new(output: Option<&'o mut Vec<Instruction>>) -> Self {
-        Self {
-            output,
-            allocator: RegisterAllocator::new(),
-        }
+impl<'o, 'a> CompilerVisitor<'o, 'a> {
+    fn new(output: &'o mut Vec<Instruction>, allocator: &'a mut RegisterAllocator) -> Self {
+        Self { output, allocator }
     }
 
     fn push(&mut self, i: code::Instruction) {
-        if let Some(ref mut output) = self.output {
-            output.push(i);
+        self.output.push(i);
+    }
+
+    fn extend(&mut self, i: impl std::iter::IntoIterator<Item = code::Instruction>) {
+        self.output.extend(i);
+    }
+
+    fn visit_if(&mut self, args: Vec<&Value>) -> Result<()> {
+        use code::Instruction::*;
+
+        self.allocator.push_range();
+
+        let cond = self.allocator.current();
+        self.visit_expr(args[0])?;
+
+        let mut true_output = Vec::new();
+        {
+            CompilerVisitor::new(&mut true_output, &mut self.allocator).visit_program(&args[1])?;
         }
+
+        let mut false_output = Vec::new();
+        {
+            CompilerVisitor::new(&mut false_output, &mut self.allocator).visit_program(&args[2])?;
+        }
+
+        self.push(JumpIf {
+            cond,
+            distance: false_output.len() as code::PcOffset + 2,
+        });
+        self.extend(false_output);
+        let always_cond = self.allocator.current();
+        self.visit_expr(&Value::Boolean(true))?;
+        self.push(JumpIf {
+            cond: always_cond,
+            distance: true_output.len() as code::PcOffset,
+        });
+
+        self.extend(true_output);
+
+        self.allocator.pop_range();
+
+        Ok(())
     }
 
     fn visit_call(&mut self, l: &Value, r: &Value) -> Result<()> {
         use code::Instruction::*;
 
-        let fn_name = l.try_as_identifier()?;
-        builtins::get(fn_name).ok_or(Error::Placeholder)?;
-
         let args: Vec<_> = r.iter_list().collect::<value::Result<Vec<_>>>()?;
+
+        let fn_name = l.try_as_identifier()?;
+        match fn_name.as_str() {
+            "if" => return self.visit_if(args),
+            _ => {}
+        }
+
+        builtins::get(fn_name).ok_or(Error::UnknownInternalFunction(fn_name.clone()))?;
+
         let num_args = args.len() as code::RegisterOffset;
 
         self.allocator.push_range();
@@ -121,7 +168,7 @@ impl<'o> CompilerVisitor<'o> {
         use code::Instruction::*;
 
         match expr {
-            Value::Integer(_) => {
+            Value::Integer(_) | Value::Boolean(_) => {
                 let dest = self.allocator.alloc();
 
                 self.push(LoadImmediate {
@@ -132,22 +179,28 @@ impl<'o> CompilerVisitor<'o> {
                 Ok(())
             }
             Value::Cell(l, r) => self.visit_call(l, r),
-            _ => Err(Error::Placeholder),
+            _ => todo!("can't visit value: {}", expr),
         }
+    }
+
+    fn visit_program(&mut self, program: &Value) -> Result<()> {
+        for maybe_item in program.iter_list() {
+            self.visit_expr(maybe_item?)?;
+        }
+
+        Ok(())
     }
 }
 
 pub fn compile(program: Value) -> Result<Vec<Instruction>> {
     use Instruction::*;
 
+    let mut allocator = RegisterAllocator::new();
     let mut output = Vec::new();
 
     let num_registers_used = {
-        let mut visitor = CompilerVisitor::new(Some(&mut output));
-
-        for maybe_item in program.iter_list() {
-            visitor.visit_expr(maybe_item?)?;
-        }
+        let mut visitor = CompilerVisitor::new(&mut output, &mut allocator);
+        visitor.visit_program(&program)?;
 
         visitor.allocator.highest_used as code::RegisterOffset + 1
     };
@@ -223,6 +276,60 @@ load 2 4;
 load 3 5;
 call + 2 2;
 call + 0 3;
+"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn constant_if() -> Result<()> {
+        snapshot!(
+            compile_display(value!(((if (< 1 2) ((debug 1)) ((debug 2))))))?,
+            "
+alloc 4;
+load 0 1;
+load 1 2;
+call < 0 2;
+jump_if 0 4 ;
+load 2 2;
+call debug 2 1;
+load 3 true;
+jump_if 3 2 ;
+load 1 1;
+call debug 1 1;
+"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn nested_if() -> Result<()> {
+        snapshot!(
+            compile_display(value!((
+                (if (< 1 2)
+                    ((if (< 3 2)
+                      nil
+                      nil
+                    ))
+                    nil
+                )
+            )))?,
+            "
+alloc 3;
+load 0 1;
+load 1 2;
+call < 0 2;
+jump_if 0 2 ;
+load 1 true;
+jump_if 1 6 ;
+load 1 3;
+load 2 2;
+call < 1 2;
+jump_if 1 2 ;
+load 2 true;
+jump_if 2 0 ;
 "
         );
 

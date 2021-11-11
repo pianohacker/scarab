@@ -6,6 +6,14 @@ pub fn exec(code: &str) -> String {
     let program = parse_implicit_form_list(code.chars()).expect("parsing failed");
 
     let instructions = compile(program).expect("compilation failed");
+    // eprintln!(
+    //     "instructions: {}",
+    //     instructions
+    //         .iter()
+    //         .map(|x| format!("{}", x))
+    //         .collect::<Vec<_>>()
+    //         .join("\n")
+    // );
 
     let mut debug_output = Vec::new();
     {
