@@ -22,6 +22,8 @@
 
 use thiserror::Error;
 
+pub type Position = (usize, usize);
+
 /// The `Source` trait allows for reading items with position information.
 ///
 /// Can be used directly with [`next()`](Self::next), but [`reader()`](Self::reader) allows use of many utility methods.
@@ -224,12 +226,12 @@ impl<S: Source> Reader<S> {
 
 /// A [`Result`] with line/column position information.
 ///
-/// Supports `?`, returning `(T, (usize, usize))` on success.
+/// Supports `?`, returning `(T, Position)` on success.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ResultAt<T, E> {
-    OkAt(T, (usize, usize)),
-    ErrAt(E, (usize, usize)),
-    NoneAt((usize, usize)),
+    OkAt(T, Position),
+    ErrAt(E, Position),
+    NoneAt(Position),
 }
 
 pub use ResultAt::*;
@@ -297,7 +299,7 @@ impl<T, E> ResultAt<T, E> {
     /// ```
     pub fn and_then_at<O, E2: From<E>>(
         self,
-        op: impl FnOnce(T, (usize, usize)) -> ResultAt<O, E2>,
+        op: impl FnOnce(T, Position) -> ResultAt<O, E2>,
     ) -> ResultAt<O, E2> {
         match self {
             OkAt(x, at) => op(x, at),
@@ -334,7 +336,7 @@ impl<T, E> ResultAt<T, E> {
     }
 
     /// Returns the contained `OkAt` value and position or panics.
-    pub fn unwrap(self) -> (T, (usize, usize))
+    pub fn unwrap(self) -> (T, Position)
     where
         E: std::fmt::Debug,
     {
@@ -349,7 +351,7 @@ impl<T, E> ResultAt<T, E> {
     }
 
     /// Returns the contained `OkAt` value or computes it from a closure.
-    pub fn unwrap_or_else(self, op: impl FnOnce() -> T) -> (T, (usize, usize)) {
+    pub fn unwrap_or_else(self, op: impl FnOnce() -> T) -> (T, Position) {
         match self {
             OkAt(x, at) => (x, at),
             ErrAt(_, at) => (op(), at),
@@ -367,7 +369,7 @@ impl<T, E> ResultAt<T, E> {
     }
 
     /// Returns an ok/erroring `ResultAt` from the given `Result` with the given position.
-    pub fn from_result<E2: Into<E>>(result: Result<T, E2>, at: (usize, usize)) -> Self {
+    pub fn from_result<E2: Into<E>>(result: Result<T, E2>, at: Position) -> Self {
         match result {
             Ok(x) => OkAt(x, at),
             Err(e) => ErrAt(e.into(), at),
@@ -414,7 +416,7 @@ impl<T, E: From<E2>, E2> std::ops::FromResidual<ResultAt<std::convert::Infallibl
 }
 
 impl<T, E> std::ops::Try for ResultAt<T, E> {
-    type Output = (T, (usize, usize));
+    type Output = (T, Position);
     type Residual = ResultAt<std::convert::Infallible, E>;
 
     fn from_output(output: Self::Output) -> Self {

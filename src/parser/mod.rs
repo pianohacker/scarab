@@ -1,4 +1,4 @@
-// Copyright (c) Jesse Weaver, 2021
+// Copyright (c) Jesse Weaver, 2021, "123"
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -10,8 +10,8 @@ use std::rc::Rc;
 use thiserror::Error;
 
 use self::tokenizer::{tokenize, Token, Tokenizer};
-use crate::value::Value;
-use result_at::{Reader, ResultAt, ResultAt::*};
+use crate::value::{self, Value};
+use result_at::{Position, Reader, ResultAt, ResultAt::*};
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum ErrorInternal {
@@ -79,8 +79,11 @@ fn result_from_result_at<T>(result_at: IResultAt<T>) -> Result<T> {
     }
 }
 
+pub type PositionMap = value::ContextMap<Position>;
+
 pub struct Parser<I: Iterator<Item = char>> {
     input: Reader<Tokenizer<I>>,
+    positions: PositionMap,
 }
 
 macro_rules! expect_match {
@@ -98,11 +101,28 @@ macro_rules! expect_match {
     };
 }
 
+macro_rules! expect_match_at {
+    ($token_at:expr, { $($pat:pat => $body:expr),+$(,)? }) => {
+        {
+            match $token_at {
+                $($pat => $body,)+
+                (token, at) => return ErrAt(
+                    ErrorInternal::UnexpectedToken(token),
+                    at,
+                ),
+            }
+        }
+    };
+}
+
 impl<I: Iterator<Item = char>> Parser<I> {
-    fn elements_to_list(elements: Vec<Value>) -> Value {
-        elements.into_iter().rev().fold(Value::Nil, |accum, elem| {
-            Value::Cell(Rc::new(elem), Rc::new(accum))
-        })
+    fn elements_to_list(elements: Vec<Rc<Value>>) -> Rc<Value> {
+        Rc::new(
+            elements
+                .into_iter()
+                .rev()
+                .fold(Value::Nil, |accum, elem| Value::Cell(elem, Rc::new(accum))),
+        )
     }
 
     fn next(&mut self) -> IResultAt<Token> {
@@ -137,7 +157,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
         &mut self,
         terminator_predicate: impl Fn(IResultAt<&Token>) -> IResultAt<bool>,
         at: (usize, usize),
-    ) -> IResultAt<Value> {
+    ) -> IResultAt<Rc<Value>> {
         let mut elements = vec![];
 
         loop {
@@ -155,16 +175,19 @@ impl<I: Iterator<Item = char>> Parser<I> {
         OkAt(Self::elements_to_list(elements), at)
     }
 
-    fn parse_operator_list(&mut self, at: (usize, usize)) -> IResultAt<Value> {
+    fn parse_operator_list(&mut self, at: (usize, usize)) -> IResultAt<Rc<Value>> {
         let (first, _) = self.parse_value()?;
 
-        let operator = expect_match!( self.next()?, {
-            Token::Identifier(i) => i,
+        let (operator, operator_at) = expect_match_at!( self.next()?, {
+            (Token::Identifier(i), at) => (i, at),
         });
+
+        let operator_value = Rc::new(Value::Identifier(value::identifier(operator.clone())));
+        self.positions.insert(&operator_value, operator_at);
 
         let (second, _) = self.parse_value()?;
 
-        let mut elements = vec![Value::Identifier(operator.clone()), first, second];
+        let mut elements = vec![operator_value, first, second];
 
         while *self.peek_or(ErrorInternal::UnterminatedList)?.0 != Token::RBracket {
             let (next, at) = self.next()?;
@@ -193,7 +216,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
         &mut self,
         terminator_predicate: impl Fn(IResultAt<&Token>) -> IResultAt<bool>,
         at: (usize, usize),
-    ) -> IResultAt<Value> {
+    ) -> IResultAt<Rc<Value>> {
         let (list, _) = self.parse_list(terminator_predicate, at)?;
 
         self.input
@@ -203,7 +226,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
         OkAt(list, at)
     }
 
-    fn parse_form_list(&mut self, mut at: (usize, usize)) -> IResultAt<Value> {
+    fn parse_form_list(&mut self, mut at: (usize, usize)) -> IResultAt<Rc<Value>> {
         let mut lists = vec![];
 
         loop {
@@ -216,13 +239,12 @@ impl<I: Iterator<Item = char>> Parser<I> {
                 |t| {
                     t.map(|t| *t == Token::Semicolon || *t == Token::Newline || *t == Token::RBrace)
                 },
-                at,
+                next_at,
             )?;
-            if list != Value::Nil {
+            if *list != Value::Nil {
+                self.positions.insert(&list, next_at);
                 lists.push(list);
             }
-
-            at = next_at;
         }
 
         expect_match!( self.next()?, {
@@ -232,7 +254,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
         OkAt(Self::elements_to_list(lists), at)
     }
 
-    pub fn parse_implicit_form_list(&mut self) -> IResultAt<Value> {
+    pub fn parse_implicit_form_list(&mut self) -> IResultAt<Rc<Value>> {
         let mut lists = vec![];
         let mut at = (1, 1);
 
@@ -251,7 +273,8 @@ impl<I: Iterator<Item = char>> Parser<I> {
                 },
                 at,
             )?;
-            if list != Value::Nil {
+            if *list != Value::Nil {
+                self.positions.insert(&list, at);
                 lists.push(list);
             }
         }
@@ -259,54 +282,58 @@ impl<I: Iterator<Item = char>> Parser<I> {
         OkAt(Self::elements_to_list(lists), at)
     }
 
-    pub fn parse_value(&mut self) -> IResultAt<Value> {
-        self.next().and_then_at(|t, at| {
-            expect_match!( (t, at), {
-                Token::Integer(i) => OkAt(Value::Integer(i), at),
-                Token::String(s) => OkAt(Value::String(s), at),
-                Token::Identifier(i) => {
-                    OkAt(match i.as_str() {
-                        "nil" => Value::Nil,
-                        "true" => Value::Boolean(true),
-                        "false" => Value::Boolean(false),
-                        _ => Value::Identifier(i),
-                    }, at)
-                },
-                Token::LParen => {
-                    let (result, _) = self.parse_list(|t| t.map(|t| *t == Token::RParen), at)?;
-                    self.next()?;
-                    OkAt(result, at)
-                },
-                Token::LBracket => self.parse_operator_list(at),
-                Token::LBrace => self.parse_form_list(at),
-                Token::Quote => self.parse_value().map(|v| Value::Quoted(Rc::new(v))),
+    pub fn parse_value(&mut self) -> IResultAt<Rc<Value>> {
+        self.next()
+            .and_then_at(|t, at| {
+                expect_match!( (t, at), {
+                    Token::Integer(i) => OkAt(Rc::new(Value::Integer(i)), at),
+                    Token::String(s) => OkAt(Rc::new(Value::String(s)), at),
+                    Token::Identifier(i) => {
+                        OkAt(match i.as_str() {
+                            "nil" => Rc::new(Value::Nil),
+                            "true" => Rc::new(Value::Boolean(true)),
+                            "false" => Rc::new(Value::Boolean(false)),
+                            _ => Rc::new(Value::Identifier(i)),
+                        }, at)
+                    },
+                    Token::LParen => {
+                        let (result, _) = self.parse_list(|t| t.map(|t| *t == Token::RParen), at)?;
+                        self.next()?;
+                        OkAt(result, at)
+                    },
+                    Token::LBracket => self.parse_operator_list(at),
+                    Token::LBrace => self.parse_form_list(at),
+                    Token::Quote => self.parse_value().map(|v| Rc::new(Value::Quoted(v))),
+                })
             })
-        })
+            .and_then_at(|t, at| {
+                self.positions.insert(&t, at);
+
+                OkAt(t, at)
+            })
     }
 }
 
-pub fn parse_value<I>(input: I) -> Result<Value>
+pub fn parse_value<I>(input: I) -> Result<(Rc<Value>, PositionMap)>
 where
     I: IntoIterator<Item = char>,
 {
-    result_from_result_at(
-        Parser {
-            input: tokenize(input.into_iter()),
-        }
-        .parse_value(),
-    )
+    let mut parser = Parser {
+        input: tokenize(input.into_iter()),
+        positions: value::ContextMap::new(),
+    };
+    result_from_result_at(parser.parse_value()).map(|v| (v, parser.positions))
 }
 
-pub fn parse_implicit_form_list<I>(input: I) -> Result<Value>
+pub fn parse_implicit_form_list<I>(input: I) -> Result<(Rc<Value>, PositionMap)>
 where
     I: IntoIterator<Item = char>,
 {
-    result_from_result_at(
-        Parser {
-            input: tokenize(input.into_iter()),
-        }
-        .parse_implicit_form_list(),
-    )
+    let mut parser = Parser {
+        input: tokenize(input.into_iter()),
+        positions: value::ContextMap::new(),
+    };
+    result_from_result_at(parser.parse_implicit_form_list()).map(|v| (v, parser.positions))
 }
 
 #[cfg(test)]
@@ -315,7 +342,26 @@ mod tests {
     use k9::{assert_err_matches_regex, snapshot};
 
     fn try_parse_display(input: &str) -> Result<String> {
-        parse_value(input.chars()).map(|v| format!("{}", v))
+        parse_value(input.chars()).map(|(v, _)| format!("{}", v))
+    }
+
+    fn try_into_display_positions<'a>(
+        parser: impl FnOnce(std::str::Chars<'a>) -> Result<(Rc<Value>, PositionMap)>,
+        input: &'a str,
+    ) -> Result<String> {
+        parser(input.chars()).map(|(_, p)| {
+            let mut entries: Vec<_> =
+                unsafe { p.iter().map(|(k, p)| (p, format!("{}", k))).collect() };
+
+            entries.sort();
+
+            let formatted_entries: Vec<_> = entries
+                .into_iter()
+                .map(|((l, c), k)| format!("    ({}, {}): {}", l, c, k))
+                .collect();
+
+            format!("{{\n{}\n}}", formatted_entries.join(",\n"))
+        })
     }
 
     #[test]
@@ -337,23 +383,9 @@ mod tests {
         snapshot!(try_parse_display("123")?, "123");
         snapshot!(try_parse_display("\"abc\"")?, r#""abc""#);
         snapshot!(try_parse_display("blah")?, "blah");
-        snapshot!(parse_value("nil".chars())?, "Nil");
-        snapshot!(
-            parse_value("true".chars())?,
-            "
-Boolean(
-    true,
-)
-"
-        );
-        snapshot!(
-            parse_value("false".chars())?,
-            "
-Boolean(
-    false,
-)
-"
-        );
+        snapshot!(try_parse_display("nil")?, "nil");
+        snapshot!(try_parse_display("true")?, "true");
+        snapshot!(try_parse_display("false")?, "false");
 
         Ok(())
     }
@@ -456,6 +488,7 @@ Boolean(
                     "
                     .chars()
                 )?
+                .0
             ),
             r#"((d c 1) (e f "yo"))"#
         );
@@ -468,6 +501,97 @@ Boolean(
         assert_err_matches_regex!(
             parse_implicit_form_list("d c 1}".chars()),
             "UnexpectedToken.*Brace"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn single_value_saves_position() -> Result<()> {
+        snapshot!(
+            try_into_display_positions(parse_value, "123")?,
+            "
+{
+    (1, 1): 123
+}
+"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn list_saves_positions() -> Result<()> {
+        snapshot!(
+            try_into_display_positions(parse_value, "(\"a\" b 1 (c 1))")?,
+            r#"
+{
+    (1, 1): ("a" b 1 (c 1)),
+    (1, 2): "a",
+    (1, 6): b,
+    (1, 8): 1,
+    (1, 10): (c 1),
+    (1, 11): c,
+    (1, 13): 1
+}
+"#
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn operator_list_saves_positions() -> Result<()> {
+        snapshot!(
+            try_into_display_positions(parse_value, "[1 + 2 + 4]")?,
+            "
+{
+    (1, 1): (+ 1 2 4),
+    (1, 2): 1,
+    (1, 4): +,
+    (1, 6): 2,
+    (1, 10): 4
+}
+"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn form_list_saves_positions() -> Result<()> {
+        snapshot!(
+            try_into_display_positions(parse_value, "{a b; def d}")?,
+            "
+{
+    (1, 1): ((a b) (def d)),
+    (1, 2): (a b),
+    (1, 2): a,
+    (1, 4): b,
+    (1, 7): (def d),
+    (1, 7): def,
+    (1, 11): d
+}
+"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn implicit_form_list_saves_positions() -> Result<()> {
+        snapshot!(
+            try_into_display_positions(parse_implicit_form_list, "a b\ndef d")?,
+            "
+{
+    (1, 1): (a b),
+    (1, 1): a,
+    (1, 3): b,
+    (2, 1): (def d),
+    (2, 1): def,
+    (2, 5): d
+}
+"
         );
 
         Ok(())

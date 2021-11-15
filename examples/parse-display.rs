@@ -22,7 +22,7 @@ fn main() {
         }
 
         match parse_implicit_form_list(line.chars()) {
-            Ok(value) => println!("{}", value),
+            Ok((value, _)) => println!("{}", value),
             Err(e) => println!("parsing failed: {}", e),
         }
 

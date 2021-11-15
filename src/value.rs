@@ -6,6 +6,7 @@
 
 use std::rc::Rc;
 
+use std::collections::HashMap;
 use thiserror::Error;
 
 pub type Identifier = String;
@@ -117,6 +118,31 @@ impl Value {
         })
     }
 
+    pub fn try_as_cell_rc(&self) -> Result<(Rc<Value>, Rc<Value>)> {
+        match self {
+            Value::Cell(l, r) => Ok((l.clone(), r.clone())),
+            _ => Err(Error::ExpectedType(Type::Cell, self.type_())),
+        }
+    }
+
+    pub fn iter_list_rc(cell: Rc<Value>) -> impl Iterator<Item = Result<Rc<Self>>> {
+        let mut current = Some(cell);
+
+        std::iter::from_fn(move || match &*current.take()? {
+            Value::Nil => None,
+            val => match val.try_as_cell_rc() {
+                Ok((l, r)) => {
+                    current = Some(r);
+                    Some(Ok(l))
+                }
+                Err(e) => {
+                    current = None;
+                    Some(Err(e))
+                }
+            },
+        })
+    }
+
     pub fn type_(&self) -> Type {
         match self {
             Value::Nil => Type::Nil,
@@ -181,6 +207,33 @@ impl std::convert::From<&str> for Value {
 impl std::convert::From<isize> for Value {
     fn from(i: isize) -> Self {
         Value::Integer(i.into())
+    }
+}
+
+#[derive(Debug)]
+pub struct ContextMap<T>(HashMap<*const Value, T>);
+
+impl<T> ContextMap<T> {
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    pub fn insert(&mut self, k: &Rc<Value>, v: T) -> Option<T> {
+        self.0.insert(Rc::as_ptr(k), v)
+    }
+
+    pub unsafe fn iter(&self) -> impl Iterator<Item = (&Value, &T)> {
+        self.0
+            .iter()
+            .map(|(k, v)| (unsafe { k.as_ref().unwrap() }, v))
+    }
+}
+
+impl<T> std::ops::Index<Rc<Value>> for ContextMap<T> {
+    type Output = T;
+
+    fn index(&self, i: Rc<Value>) -> &T {
+        &self.0[&Rc::as_ptr(&i)]
     }
 }
 

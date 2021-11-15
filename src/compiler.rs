@@ -5,6 +5,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use std::ops::Range;
+use std::rc::Rc;
 use thiserror::Error;
 
 use crate::builtins;
@@ -93,22 +94,24 @@ impl<'o, 'a> CompilerVisitor<'o, 'a> {
         self.output.extend(i);
     }
 
-    fn visit_if(&mut self, args: Vec<&Value>) -> Result<()> {
+    fn visit_if(&mut self, args: Vec<Rc<Value>>) -> Result<()> {
         use code::Instruction::*;
 
         self.allocator.push_range();
 
         let cond = self.allocator.current();
-        self.visit_expr(args[0])?;
+        self.visit_expr(args[0].clone())?;
 
         let mut true_output = Vec::new();
         {
-            CompilerVisitor::new(&mut true_output, &mut self.allocator).visit_program(&args[1])?;
+            CompilerVisitor::new(&mut true_output, &mut self.allocator)
+                .visit_program(args[1].clone())?;
         }
 
         let mut false_output = Vec::new();
         {
-            CompilerVisitor::new(&mut false_output, &mut self.allocator).visit_program(&args[2])?;
+            CompilerVisitor::new(&mut false_output, &mut self.allocator)
+                .visit_program(args[2].clone())?;
         }
 
         self.push(JumpIf {
@@ -117,7 +120,7 @@ impl<'o, 'a> CompilerVisitor<'o, 'a> {
         });
         self.extend(false_output);
         let always_cond = self.allocator.current();
-        self.visit_expr(&Value::Boolean(true))?;
+        self.visit_expr(Rc::new(Value::Boolean(true)))?;
         self.push(JumpIf {
             cond: always_cond,
             distance: true_output.len() as code::PcOffset,
@@ -130,10 +133,10 @@ impl<'o, 'a> CompilerVisitor<'o, 'a> {
         Ok(())
     }
 
-    fn visit_call(&mut self, l: &Value, r: &Value) -> Result<()> {
+    fn visit_call(&mut self, l: Rc<Value>, r: Rc<Value>) -> Result<()> {
         use code::Instruction::*;
 
-        let args: Vec<_> = r.iter_list().collect::<value::Result<Vec<_>>>()?;
+        let args: Vec<_> = Value::iter_list_rc(r).collect::<value::Result<Vec<_>>>()?;
 
         let fn_name = l.try_as_identifier()?;
         match fn_name.as_str() {
@@ -164,27 +167,27 @@ impl<'o, 'a> CompilerVisitor<'o, 'a> {
         Ok(())
     }
 
-    fn visit_expr(&mut self, expr: &Value) -> Result<()> {
+    fn visit_expr(&mut self, expr: Rc<Value>) -> Result<()> {
         use code::Instruction::*;
 
-        match expr {
+        match &*expr {
             Value::Integer(_) | Value::Boolean(_) => {
                 let dest = self.allocator.alloc();
 
                 self.push(LoadImmediate {
                     dest,
-                    value: expr.clone(),
+                    value: (*expr).clone(),
                 });
 
                 Ok(())
             }
-            Value::Cell(l, r) => self.visit_call(l, r),
+            Value::Cell(l, r) => self.visit_call(l.clone(), r.clone()),
             _ => todo!("can't visit value: {}", expr),
         }
     }
 
-    fn visit_program(&mut self, program: &Value) -> Result<()> {
-        for maybe_item in program.iter_list() {
+    fn visit_program(&mut self, program: Rc<Value>) -> Result<()> {
+        for maybe_item in Value::iter_list_rc(program) {
             self.visit_expr(maybe_item?)?;
         }
 
@@ -192,7 +195,7 @@ impl<'o, 'a> CompilerVisitor<'o, 'a> {
     }
 }
 
-pub fn compile(program: Value) -> Result<Vec<Instruction>> {
+pub fn compile(program: Rc<Value>) -> Result<Vec<Instruction>> {
     use Instruction::*;
 
     let mut allocator = RegisterAllocator::new();
@@ -200,7 +203,7 @@ pub fn compile(program: Value) -> Result<Vec<Instruction>> {
 
     let num_registers_used = {
         let mut visitor = CompilerVisitor::new(&mut output, &mut allocator);
-        visitor.visit_program(&program)?;
+        visitor.visit_program(program.clone())?;
 
         visitor.allocator.highest_used as code::RegisterOffset + 1
     };
@@ -221,7 +224,7 @@ mod tests {
     use k9::{assert_err_matches_regex, snapshot};
 
     fn compile_display(program: Value) -> Result<String> {
-        Ok(compile(program)?
+        Ok(compile(Rc::new(program))?
             .into_iter()
             .map(|i| format!("{}", i))
             .collect::<Vec<_>>()

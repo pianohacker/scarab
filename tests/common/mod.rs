@@ -3,7 +3,9 @@ use scarab::parser::parse_implicit_form_list;
 use scarab::vm::Vm;
 
 pub fn exec(code: &str) -> String {
-    let program = parse_implicit_form_list(code.chars()).expect("parsing failed");
+    let program = parse_implicit_form_list(code.chars())
+        .expect("parsing failed")
+        .0;
 
     let instructions = compile(program).expect("compilation failed");
     // eprintln!(
