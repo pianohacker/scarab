@@ -226,7 +226,7 @@ impl<I: Iterator<Item = char>> Parser<I> {
         OkAt(list, at)
     }
 
-    fn parse_form_list(&mut self, mut at: (usize, usize)) -> IResultAt<Rc<Value>> {
+    fn parse_form_list(&mut self, at: (usize, usize)) -> IResultAt<Rc<Value>> {
         let mut lists = vec![];
 
         loop {

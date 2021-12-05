@@ -7,5 +7,6 @@
 mod builtins;
 pub mod compiler;
 pub mod parser;
+pub mod types;
 pub mod value;
 pub mod vm;

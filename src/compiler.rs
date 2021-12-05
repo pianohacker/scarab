@@ -4,21 +4,31 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
+
+use result_at::Position;
 use thiserror::Error;
 
 use crate::builtins;
+use crate::parser;
+use crate::types::{self, Typeable};
 use crate::value;
 use crate::value::Value;
 use crate::vm::code::{self, Instruction};
 
 #[derive(Error, Debug, Eq, PartialEq)]
-pub enum Error {
+pub enum ErrorInternal {
     #[error("invalid value in program: {source}")]
     Value {
         #[from]
-        source: crate::value::Error,
+        source: value::Error,
+    },
+    #[error("type error: {source}")]
+    Type {
+        #[from]
+        source: types::Error,
     },
     #[error("unknown internal function: {0}")]
     UnknownInternalFunction(value::Identifier),
@@ -26,7 +36,27 @@ pub enum Error {
     Placeholder,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub struct Error {
+    error: ErrorInternal,
+    line: usize,
+    column: usize,
+}
+
+impl std::error::Error for Error {}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        write!(
+            f,
+            "{} (at line {}, column {})",
+            self.error, self.line, self.column
+        )
+    }
+}
+
 type Result<T> = std::result::Result<T, Error>;
+type IResult<T> = std::result::Result<T, ErrorInternal>;
 
 struct RegisterAllocator {
     highest_used: code::RegisterId,
@@ -76,14 +106,168 @@ impl RegisterAllocator {
     }
 }
 
-struct CompilerVisitor<'o, 'a> {
-    output: &'o mut Vec<Instruction>,
-    allocator: &'a mut RegisterAllocator,
+trait Visitor<'p> {
+    fn get_positions(&self) -> &'p parser::PositionMap;
+
+    fn label_with_value<T, E: Into<ErrorInternal>>(
+        &self,
+        r: std::result::Result<T, E>,
+        value: &Rc<Value>,
+    ) -> Result<T> {
+        r.map_err(|e| {
+            let (line, column) = self.get_positions()[value];
+            Error {
+                error: e.into(),
+                line,
+                column,
+            }
+        })
+    }
+
+    fn label_with_position<T, E: Into<ErrorInternal>>(
+        &self,
+        r: std::result::Result<T, E>,
+        (line, column): Position,
+    ) -> Result<T> {
+        r.map_err(|e| Error {
+            error: e.into(),
+            line,
+            column,
+        })
+    }
+
+    fn collect_call<'l>(
+        &self,
+        l: &'l Rc<Value>,
+        r: Rc<Value>,
+    ) -> Result<(&'l String, Vec<Rc<Value>>)> {
+        Ok((
+            self.label_with_value(l.try_as_identifier(), &l)?,
+            self.label_with_value(
+                Value::iter_list_rc(r).collect::<value::Result<Vec<_>>>(),
+                &l,
+            )?,
+        ))
+    }
+
+    fn get_builtin(&self, name: &Rc<Value>) -> Result<&'static builtins::Builtin> {
+        let fn_name = self.label_with_value(name.try_as_identifier(), &name)?;
+
+        self.label_with_value(
+            builtins::get(fn_name).ok_or(ErrorInternal::UnknownInternalFunction(fn_name.clone())),
+            &name,
+        )
+    }
+
+    fn visit_statement(&mut self, statement: Rc<Value>) -> Result<()>;
+
+    fn visit_program(&mut self, program: Rc<Value>) -> Result<()> {
+        for maybe_item in Value::iter_list_rc(program) {
+            self.visit_statement(self.label_with_position(maybe_item, (1, 1))?)?;
+        }
+
+        Ok(())
+    }
 }
 
-impl<'o, 'a> CompilerVisitor<'o, 'a> {
-    fn new(output: &'o mut Vec<Instruction>, allocator: &'a mut RegisterAllocator) -> Self {
-        Self { output, allocator }
+struct TypeCheckVisitor<'v, 'p> {
+    variables: &'v mut HashMap<String, types::Type>,
+    positions: &'p parser::PositionMap,
+}
+
+impl<'p> Visitor<'p> for TypeCheckVisitor<'_, 'p> {
+    fn get_positions(&self) -> &'p parser::PositionMap {
+        self.positions
+    }
+
+    fn visit_statement(&mut self, statement: Rc<Value>) -> Result<()> {
+        self.visit_expr(statement.clone())?;
+
+        Ok(())
+    }
+}
+
+impl<'v, 'p> TypeCheckVisitor<'v, 'p> {
+    fn new(
+        variables: &'v mut HashMap<String, types::Type>,
+        positions: &'p parser::PositionMap,
+    ) -> Self {
+        Self {
+            variables,
+            positions,
+        }
+    }
+
+    fn visit_set(&mut self, r: Vec<Rc<Value>>) -> Result<types::Type> {
+        todo!();
+    }
+
+    fn visit_call(&mut self, l: Rc<Value>, r: Rc<Value>) -> Result<types::Type> {
+        let (fn_name, args) = self.collect_call(&l, r.clone())?;
+
+        let builtin = self.get_builtin(&l)?;
+
+        self.label_with_value(builtin.signature.check_arguments_length(args.len()), &r)?;
+
+        for (position, (arg, arg_spec)) in args
+            .iter()
+            .zip(builtin.signature.specs_by_position())
+            .enumerate()
+        {
+            let type_ = if arg_spec.is_raw() {
+                arg.type_()
+            } else {
+                self.visit_expr(arg.clone())?
+            };
+
+            self.label_with_value(arg_spec.check_at(type_, position), &arg)?;
+        }
+
+        match fn_name.as_str() {
+            "set" => self.visit_set(args),
+            "if" => Ok(types::Type::Nil),
+            _ => Ok(builtin.signature.return_type),
+        }
+    }
+
+    fn visit_expr(&mut self, expr: Rc<Value>) -> Result<types::Type> {
+        match &*expr {
+            Value::Integer(_) | Value::Boolean(_) | Value::String(_) | Value::Nil => {
+                Ok(expr.type_())
+            }
+            Value::Cell(l, r) => self.visit_call(l.clone(), r.clone()),
+            _ => todo!("can't visit value: {}", expr),
+        }
+    }
+}
+
+struct CompilerVisitor<'o, 'a, 'p> {
+    output: &'o mut Vec<Instruction>,
+    allocator: &'a mut RegisterAllocator,
+    positions: &'p parser::PositionMap,
+}
+
+impl<'p> Visitor<'p> for CompilerVisitor<'_, '_, 'p> {
+    fn get_positions(&self) -> &'p parser::PositionMap {
+        self.positions
+    }
+
+    fn visit_statement(&mut self, statement: Rc<Value>) -> Result<()> {
+        self.visit_expr(statement)
+    }
+}
+
+impl<'o, 'a, 'p> CompilerVisitor<'o, 'a, 'p> {
+    fn new(
+        output: &'o mut Vec<Instruction>,
+        allocator: &'a mut RegisterAllocator,
+        positions: &'p parser::PositionMap,
+    ) -> Self {
+        Self {
+            output,
+            allocator,
+            positions,
+        }
     }
 
     fn push(&mut self, i: code::Instruction) {
@@ -104,13 +288,13 @@ impl<'o, 'a> CompilerVisitor<'o, 'a> {
 
         let mut true_output = Vec::new();
         {
-            CompilerVisitor::new(&mut true_output, &mut self.allocator)
+            CompilerVisitor::new(&mut true_output, &mut self.allocator, &self.positions)
                 .visit_program(args[1].clone())?;
         }
 
         let mut false_output = Vec::new();
         {
-            CompilerVisitor::new(&mut false_output, &mut self.allocator)
+            CompilerVisitor::new(&mut false_output, &mut self.allocator, &self.positions)
                 .visit_program(args[2].clone())?;
         }
 
@@ -136,15 +320,14 @@ impl<'o, 'a> CompilerVisitor<'o, 'a> {
     fn visit_call(&mut self, l: Rc<Value>, r: Rc<Value>) -> Result<()> {
         use code::Instruction::*;
 
-        let args: Vec<_> = Value::iter_list_rc(r).collect::<value::Result<Vec<_>>>()?;
+        let (fn_name, args) = self.collect_call(&l, r)?;
 
-        let fn_name = l.try_as_identifier()?;
         match fn_name.as_str() {
             "if" => return self.visit_if(args),
             _ => {}
         }
 
-        builtins::get(fn_name).ok_or(Error::UnknownInternalFunction(fn_name.clone()))?;
+        self.get_builtin(&l)?;
 
         let num_args = args.len() as code::RegisterOffset;
 
@@ -171,7 +354,7 @@ impl<'o, 'a> CompilerVisitor<'o, 'a> {
         use code::Instruction::*;
 
         match &*expr {
-            Value::Integer(_) | Value::Boolean(_) => {
+            Value::Integer(_) | Value::Boolean(_) | Value::String(_) | Value::Nil => {
                 let dest = self.allocator.alloc();
 
                 self.push(LoadImmediate {
@@ -185,24 +368,20 @@ impl<'o, 'a> CompilerVisitor<'o, 'a> {
             _ => todo!("can't visit value: {}", expr),
         }
     }
-
-    fn visit_program(&mut self, program: Rc<Value>) -> Result<()> {
-        for maybe_item in Value::iter_list_rc(program) {
-            self.visit_expr(maybe_item?)?;
-        }
-
-        Ok(())
-    }
 }
 
-pub fn compile(program: Rc<Value>) -> Result<Vec<Instruction>> {
+pub fn compile(program: Rc<Value>, positions: parser::PositionMap) -> Result<Vec<Instruction>> {
     use Instruction::*;
+
+    let mut variables = HashMap::new();
+
+    TypeCheckVisitor::new(&mut variables, &positions).visit_program(program.clone())?;
 
     let mut allocator = RegisterAllocator::new();
     let mut output = Vec::new();
 
     let num_registers_used = {
-        let mut visitor = CompilerVisitor::new(&mut output, &mut allocator);
+        let mut visitor = CompilerVisitor::new(&mut output, &mut allocator, &positions);
         visitor.visit_program(program.clone())?;
 
         visitor.allocator.highest_used as code::RegisterOffset + 1
@@ -223,8 +402,10 @@ mod tests {
     use super::*;
     use k9::{assert_err_matches_regex, snapshot};
 
-    fn compile_display(program: Value) -> Result<String> {
-        Ok(compile(Rc::new(program))?
+    fn compile_display(program: &str) -> Result<String> {
+        let (program, positions) = parser::parse_implicit_form_list(program.chars()).unwrap();
+
+        Ok(compile(program, positions)?
             .into_iter()
             .map(|i| format!("{}", i))
             .collect::<Vec<_>>()
@@ -235,7 +416,7 @@ mod tests {
     #[test]
     fn basic_add() -> Result<()> {
         snapshot!(
-            compile_display(value!(((+ 1 2 3))))?,
+            compile_display("+ 1 2 3")?,
             "
 alloc 3;
 load 0 1;
@@ -249,9 +430,41 @@ call + 0 3;
     }
 
     #[test]
+    fn basic_mixed() -> Result<()> {
+        snapshot!(
+            compile_display("debug 1 \"a\" true nil")?,
+            r#"
+alloc 4;
+load 0 1;
+load 1 "a";
+load 2 true;
+load 3 nil;
+call debug 0 4;
+"#
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_internal_func_fails() -> Result<()> {
+        assert_err_matches_regex!(compile_display("-unknown-"), "Unknown.*line.*1.*1");
+
+        Ok(())
+    }
+
+    #[test]
+    #[ignore]
+    fn incorrect_add_fails() -> Result<()> {
+        assert_err_matches_regex!(compile_display("+ \"a\" 1"), "InvalidArgument");
+
+        Ok(())
+    }
+
+    #[test]
     fn nested_add() -> Result<()> {
         snapshot!(
-            compile_display(value!(((+ 1 (+ 2 3)))))?,
+            compile_display("+ 1 (+ 2 3)")?,
             "
 alloc 3;
 load 0 1;
@@ -268,7 +481,7 @@ call + 0 2;
     #[test]
     fn double_nested_add() -> Result<()> {
         snapshot!(
-            compile_display(value!(((+ 1 (+ 2 3) (+ 4 5)))))?,
+            compile_display("+ 1 (+ 2 3) (+ 4 5)")?,
             "
 alloc 4;
 load 0 1;
@@ -288,7 +501,7 @@ call + 0 3;
     #[test]
     fn constant_if() -> Result<()> {
         snapshot!(
-            compile_display(value!(((if (< 1 2) ((debug 1)) ((debug 2))))))?,
+            compile_display("if (< 1 2) {debug 1} {debug 2}")?,
             "
 alloc 4;
 load 0 1;
@@ -310,15 +523,13 @@ call debug 1 1;
     #[test]
     fn nested_if() -> Result<()> {
         snapshot!(
-            compile_display(value!((
-                (if (< 1 2)
-                    ((if (< 3 2)
-                      nil
-                      nil
-                    ))
-                    nil
-                )
-            )))?,
+            compile_display(
+                "
+                if (< 1 2) {
+                    if (< 3 2) nil nil
+                } nil
+                "
+            )?,
             "
 alloc 3;
 load 0 1;
@@ -335,6 +546,20 @@ load 2 true;
 jump_if 2 0 ;
 "
         );
+
+        Ok(())
+    }
+
+    #[test]
+    #[ignore]
+    fn basic_variables() -> Result<()> {
+        snapshot!(compile_display(
+            "
+                set a 1
+                set b 2
+                + a b
+            "
+        )?);
 
         Ok(())
     }

@@ -4,10 +4,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 
-use std::collections::HashMap;
 use thiserror::Error;
+
+use crate::types::{self, Type, Typeable};
 
 pub type Identifier = String;
 
@@ -22,35 +24,6 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Type {
-    Nil,
-    Boolean,
-    Integer,
-    String,
-    Identifier,
-    Cell,
-    Quoted,
-}
-
-impl std::fmt::Display for Type {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Type::Nil => "nil",
-                Type::Boolean => "boolean",
-                Type::Integer => "integer",
-                Type::String => "string",
-                Type::Identifier => "identifier",
-                Type::Cell => "cell",
-                Type::Quoted => "quoted",
-            }
-        )
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
@@ -142,8 +115,10 @@ impl Value {
             },
         })
     }
+}
 
-    pub fn type_(&self) -> Type {
+impl types::Typeable for Value {
+    fn type_(&self) -> Type {
         match self {
             Value::Nil => Type::Nil,
             Value::Boolean(_) => Type::Boolean,
@@ -229,10 +204,10 @@ impl<T> ContextMap<T> {
     }
 }
 
-impl<T> std::ops::Index<Rc<Value>> for ContextMap<T> {
+impl<T> std::ops::Index<&Rc<Value>> for ContextMap<T> {
     type Output = T;
 
-    fn index(&self, i: Rc<Value>) -> &T {
+    fn index(&self, i: &Rc<Value>) -> &T {
         &self.0[&Rc::as_ptr(&i)]
     }
 }
