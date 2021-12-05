@@ -199,7 +199,12 @@ impl<'v, 'p> TypeCheckVisitor<'v, 'p> {
     }
 
     fn visit_set(&mut self, r: Vec<Rc<Value>>) -> Result<types::Type> {
-        todo!();
+        let name = r[0].try_as_identifier().unwrap();
+        let value_type = self.visit_expr(r[1].clone())?;
+
+        self.variables.insert(name.to_string(), value_type);
+
+        Ok(value_type)
     }
 
     fn visit_call(&mut self, l: Rc<Value>, r: Rc<Value>) -> Result<types::Type> {
@@ -235,6 +240,7 @@ impl<'v, 'p> TypeCheckVisitor<'v, 'p> {
             Value::Integer(_) | Value::Boolean(_) | Value::String(_) | Value::Nil => {
                 Ok(expr.type_())
             }
+            Value::Identifier(i) => Ok(self.variables[i]),
             Value::Cell(l, r) => self.visit_call(l.clone(), r.clone()),
             _ => todo!("can't visit value: {}", expr),
         }
@@ -551,7 +557,6 @@ jump_if 2 0 ;
     }
 
     #[test]
-    #[ignore]
     fn basic_variables() -> Result<()> {
         snapshot!(compile_display(
             "

@@ -12,7 +12,7 @@ The syntax consists of the following tokens:
 
 ```
 delimiters = ( | ) | [ | ] | { | } | ' | ;
-newline = "\n" # Significant inside form lists, ignored otherwise. 
+newline = "\n" # Significant inside form lists, ignored otherwise.
 integer = [1-9][0-9]* | 0x[1-9a-fA-F]+ | 0b[01]+
 string = "[^"]*" # May include unescaped newlines.
 identifier = [[ any character not a prefix of above classes ]]
@@ -70,4 +70,54 @@ Each statement in a program is an expression. These expressions can be any type,
 
 * Integer, String, and Boolean: evaluate to themselves (are _atoms_).
 * List: evaluated as a function call.
+* Identifier: evaluate to the current value of the matching variable.
 * Quoted: TBD
+
+## Function calls
+
+Function calls are lists in the following format:
+
+```
+func arg1 arg2 ...
+```
+
+Where `func` is an Identifier referring to a builtin function and `arg1`, etc. are the argument
+values for the function.
+
+Each argument to a function may or may not be evaluated. Some functions take _raw_ arguments, which
+may never be evaluated or only conditionally evaluated.
+
+Function calls return a single value.
+
+### Function signatures
+
+Function signatures are given in the following format:
+
+```
+func-name {arg1 type1; arg2 type2; ...} return-type
+```
+
+Where `func-name` is the name of the function, each `argN typeN` pair gives the name and type of an
+argument, and `return-type` is the type of the returned value.
+
+Raw arguments are shown as `argN (raw typeN)`.
+
+### Built-in functions
+
+#### `debug`
+
+`debug {arg1 Any; ...} Nil`
+
+Prints a representation of each value.
+
+#### `if`
+
+`if {condition Boolean; true-clause (raw Program); false-clause (raw Program)} Nil`
+
+Based on the value of `condition`, runs `true-clause` or `false-clause`.
+
+#### `set`
+
+`set {name (raw Identifier); value Any} Nil`
+
+Sets the local variable `name` to the given `value`.
