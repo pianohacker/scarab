@@ -170,12 +170,12 @@ trait Visitor<'p> {
     }
 }
 
-struct TypeCheckVisitor<'v, 'p> {
-    variables: &'v mut HashMap<String, types::Type>,
+struct TypeCheckVisitor<'p> {
+    variables: HashMap<String, types::Type>,
     positions: &'p parser::PositionMap,
 }
 
-impl<'p> Visitor<'p> for TypeCheckVisitor<'_, 'p> {
+impl<'p> Visitor<'p> for TypeCheckVisitor<'p> {
     fn get_positions(&self) -> &'p parser::PositionMap {
         self.positions
     }
@@ -187,13 +187,10 @@ impl<'p> Visitor<'p> for TypeCheckVisitor<'_, 'p> {
     }
 }
 
-impl<'v, 'p> TypeCheckVisitor<'v, 'p> {
-    fn new(
-        variables: &'v mut HashMap<String, types::Type>,
-        positions: &'p parser::PositionMap,
-    ) -> Self {
+impl<'p> TypeCheckVisitor<'p> {
+    fn new(positions: &'p parser::PositionMap) -> Self {
         Self {
-            variables,
+            variables: HashMap::new(),
             positions,
         }
     }
@@ -251,6 +248,7 @@ struct CompilerVisitor<'o, 'a, 'p> {
     output: &'o mut Vec<Instruction>,
     allocator: &'a mut RegisterAllocator,
     positions: &'p parser::PositionMap,
+    variables: HashMap<String, code::RegisterId>,
 }
 
 impl<'p> Visitor<'p> for CompilerVisitor<'_, '_, 'p> {
@@ -273,6 +271,7 @@ impl<'o, 'a, 'p> CompilerVisitor<'o, 'a, 'p> {
             output,
             allocator,
             positions,
+            variables: HashMap::new(),
         }
     }
 
@@ -282,6 +281,16 @@ impl<'o, 'a, 'p> CompilerVisitor<'o, 'a, 'p> {
 
     fn extend(&mut self, i: impl std::iter::IntoIterator<Item = code::Instruction>) {
         self.output.extend(i);
+    }
+
+    fn visit_set(&mut self, args: Vec<Rc<Value>>) -> Result<()> {
+        let name = args[0].try_as_identifier().unwrap();
+
+        self.variables
+            .insert(name.to_string(), self.allocator.current());
+        self.visit_expr(args[1].clone())?;
+
+        Ok(())
     }
 
     fn visit_if(&mut self, args: Vec<Rc<Value>>) -> Result<()> {
@@ -330,6 +339,7 @@ impl<'o, 'a, 'p> CompilerVisitor<'o, 'a, 'p> {
 
         match fn_name.as_str() {
             "if" => return self.visit_if(args),
+            "set" => return self.visit_set(args),
             _ => {}
         }
 
@@ -370,6 +380,16 @@ impl<'o, 'a, 'p> CompilerVisitor<'o, 'a, 'p> {
 
                 Ok(())
             }
+            Value::Identifier(i) => {
+                let dest = self.allocator.alloc();
+
+                self.push(Copy {
+                    dest,
+                    src: self.variables[i],
+                });
+
+                Ok(())
+            }
             Value::Cell(l, r) => self.visit_call(l.clone(), r.clone()),
             _ => todo!("can't visit value: {}", expr),
         }
@@ -379,9 +399,7 @@ impl<'o, 'a, 'p> CompilerVisitor<'o, 'a, 'p> {
 pub fn compile(program: Rc<Value>, positions: parser::PositionMap) -> Result<Vec<Instruction>> {
     use Instruction::*;
 
-    let mut variables = HashMap::new();
-
-    TypeCheckVisitor::new(&mut variables, &positions).visit_program(program.clone())?;
+    TypeCheckVisitor::new(&positions).visit_program(program.clone())?;
 
     let mut allocator = RegisterAllocator::new();
     let mut output = Vec::new();
@@ -564,7 +582,14 @@ jump_if 2 0 ;
                 set b 2
                 + a b
             "
-        )?);
+        )?, "
+alloc 4;
+load 0 1;
+load 1 2;
+copy 2 0;
+copy 3 1;
+call + 2 2;
+");
 
         Ok(())
     }

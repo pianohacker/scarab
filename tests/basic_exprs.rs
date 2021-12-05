@@ -19,3 +19,8 @@ fn nested_if() {
         "2"
     );
 }
+
+#[test]
+fn basic_variables() {
+    snapshot!(common::exec("set a 1; set b 2; debug b a"), "2 1");
+}
