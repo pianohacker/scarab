@@ -118,6 +118,6 @@ Based on the value of `condition`, runs `true-clause` or `false-clause`.
 
 #### `set`
 
-`set {name (raw Identifier); value Any} Nil`
+`set {name (raw Identifier); value Any} Any`
 
-Sets the local variable `name` to the given `value`.
+Sets the local variable `name` to the given `value`. Returns the value.
